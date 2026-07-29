@@ -1,0 +1,36 @@
+# Builds the project
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+# One deployment at a time, and never cancel one midway
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # build.sh expects these on $PATH and never installs anything itself (see
+      # AGENTS.md).
+      - name: Install build tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      # Silent on success; on failure it prints the failing step and exits non-zero
+      - name: Build
+        run: ./build.sh
