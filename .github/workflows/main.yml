@@ -1,0 +1,66 @@
+# Builds the project and publishes the binary as a rolling `latest` release.
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+# One deployment at a time, and never cancel one midway
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Overrides the workflow default only to add contents: write, which the
+    # release step needs to move the `latest` tag and upload the binary.
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # build.sh expects these on $PATH and never installs anything itself (see
+      # AGENTS.md).
+      - name: Install build tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      # Silent on success; on failure it prints the failing step and exits non-zero
+      - name: Build
+        run: ./build.sh
+
+      # Publishes the binary ./build.sh produced as a rolling release, so
+      # https://github.com/<owner>/<repo>/releases/latest always serves the
+      # newest green build of main. `gh` is preinstalled on the runner, so this
+      # pulls in no third-party action.
+      #
+      # A rolling release means the `latest` tag has to move: delete the
+      # release and its tag, then recreate both at this commit. The delete is
+      # tolerant of there being nothing to delete (the first run), but the
+      # create is not — if that fails, the job fails.
+      - name: Release the binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Via the environment rather than spliced into the command line, so
+          # the value can never be read as shell syntax.
+          SHA: ${{ github.sha }}
+        run: |
+          # The asset name says what it is: the static linux/amd64 binary,
+          # which is the only platform ./build.sh targets here.
+          cp mylinks mylinks-linux-amd64
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest mylinks-linux-amd64 \
+            --target "$SHA" \
+            --title "Latest build from main" \
+            --notes "Automated build of \`main\` at commit $SHA."
