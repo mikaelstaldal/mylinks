@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"fmt"
@@ -14,6 +16,30 @@ import (
 
 var ErrDuplicate = errors.New("duplicate")
 var ErrNotFound = errors.New("not found")
+
+// connectionOptions are appended to the database file name to form the DSN:
+//   - busy_timeout makes a connection wait for a lock held by another
+//     connection instead of failing immediately with SQLITE_BUSY,
+//   - journal_mode=WAL lets readers and the writer work concurrently, so an
+//     ongoing read no longer blocks a write,
+//   - _txlock=immediate takes the write lock when the transaction begins,
+//     where the busy timeout applies, rather than when it first writes.
+//     This also means every transaction must be assumed to write: a
+//     read-only transaction added later would needlessly block writers.
+//
+// The default synchronous=FULL is kept, WAL is fast enough without
+// trading away durability.
+const connectionOptions = "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+
+// maxOpenConns bounds the connection pool, so that a burst of requests cannot
+// open an unbounded number of SQLite connections. WAL allows several
+// concurrent readers alongside a single writer; writers beyond the first wait
+// for the busy timeout.
+const maxOpenConns = 8
+
+// maxIdleConns keeps a couple of connections around for the common case,
+// rather than holding all maxOpenConns open forever.
+const maxIdleConns = 2
 
 // Link represents a saved web link.
 type Link struct {
@@ -31,10 +57,23 @@ type DB struct {
 
 // InitDB initializes the database.
 func InitDB(databaseFile string) (*DB, error) {
-	db, err := sql.Open("sqlite", databaseFile)
+	// An absolute path cannot be mistaken for a "file:" URI by the driver.
+	databaseFile, err := filepath.Abs(databaseFile)
 	if err != nil {
 		return nil, err
 	}
+	// The driver splits the DSN at the first '?', so a file name containing
+	// one would silently open a different database.
+	if strings.ContainsRune(databaseFile, '?') {
+		return nil, fmt.Errorf("database file name must not contain '?': %s", databaseFile)
+	}
+
+	db, err := sql.Open("sqlite", databaseFile+connectionOptions)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
 
 	if err = db.Ping(); err != nil {
 		return nil, err

@@ -1,7 +1,10 @@
 package db
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,8 +13,9 @@ import (
 
 //goland:noinspection GoDirectComparisonOfErrors
 func TestDB(t *testing.T) {
-	// Use a temporary database file for testing
-	dbFile := "test.database"
+	// Use a temporary database file for testing, in a directory which is
+	// removed afterwards along with the WAL and shared memory files.
+	dbFile := filepath.Join(t.TempDir(), "test.database")
 
 	// Initialize the database
 	database, err := InitDB(dbFile)
@@ -21,8 +25,17 @@ func TestDB(t *testing.T) {
 		if database != nil {
 			_ = database.Close()
 		}
-		_ = os.Remove(dbFile)
 	})
+
+	// Verify the connection options which keep concurrent access working
+	var journalMode string
+	err = database.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err, "Failed to query journal_mode")
+	assert.Equal(t, "wal", journalMode)
+	var busyTimeout int
+	err = database.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout)
+	require.NoError(t, err, "Failed to query busy_timeout")
+	assert.Positive(t, busyTimeout, "Expected a non-zero busy timeout")
 
 	// Test adding a link
 	url := "https://example.com"
@@ -127,4 +140,59 @@ func TestDB(t *testing.T) {
 	if err == nil {
 		_ = database.Close()
 	}
+}
+
+// TestConcurrentAccess verifies that concurrent readers and writers do not
+// fail with SQLITE_BUSY.
+func TestConcurrentAccess(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "test_concurrent.database")
+
+	database, err := InitDB(dbFile)
+	require.NoError(t, err, "Failed to initialize database")
+	t.Cleanup(func() {
+		_ = database.Close()
+	})
+
+	const writers = 8
+	const readers = 8
+	const iterations = 20
+
+	var wg sync.WaitGroup
+	// Buffered for the maximum number of errors, so no goroutine blocks on send
+	errs := make(chan error, (writers+2*readers)*iterations)
+
+	for w := range writers {
+		wg.Go(func() {
+			for i := range iterations {
+				url := fmt.Sprintf("https://example.com/%d/%d", w, i)
+				if _, err := database.AddLink(url, "Example Website", "An example", []byte("body text")); err != nil {
+					errs <- err
+				}
+			}
+		})
+	}
+
+	for range readers {
+		wg.Go(func() {
+			for range iterations {
+				if _, err := database.GetAllLinks(); err != nil {
+					errs <- err
+				}
+				if _, err := database.Search("body"); err != nil {
+					errs <- err
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err, "Concurrent access failed")
+	}
+
+	links, err := database.GetAllLinks()
+	require.NoError(t, err, "Failed to get links")
+	assert.Len(t, links, writers*iterations, "Got %d links, expected %d", len(links), writers*iterations)
 }

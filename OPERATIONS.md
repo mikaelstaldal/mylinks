@@ -65,6 +65,8 @@ chmod 0700 /var/lib/mylinks /var/lib/mylinks/data
 
 mylinks creates `mylinks.sqlite` (and a `screenshots/` subdirectory, if screenshot support is enabled) in the data directory on first startup.
 
+The database runs in WAL mode, so `mylinks.sqlite-wal` and `mylinks.sqlite-shm` appear alongside it while mylinks is running. Copying `mylinks.sqlite` on its own is not a complete backup; either stop mylinks first or use `sqlite3 mylinks.sqlite ".backup backup.sqlite"`.
+
 ---
 
 ## Set Up Authentication

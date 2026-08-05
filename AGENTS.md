@@ -52,8 +52,9 @@ go test -v ./cmd/mylinks/web
 ### Adding New Tests
 1. Create a test file with the naming convention `*_test.go` in the relevant package directory
 2. For database tests, follow the pattern in `cmd/mylinks/db/db_test.go`:
-   - Use a temporary database file
-   - Clean up after the test with `defer os.Remove(dbFile)`
+   - Use a database file in `t.TempDir()`, so the WAL and shared memory files
+     are cleaned up along with it
+   - Close the database with `t.Cleanup()`
    - Test the full lifecycle of operations
 
 3. For handler tests, follow the pattern in `cmd/mylinks/web/handlers_test.go`:
@@ -68,8 +69,7 @@ Here's a simple example of testing the ListLinks handler:
 ```go
 func TestListLinks(t *testing.T) {
     // Use a temporary database file for testing
-    dbFile := "test_handlers.db"
-    defer os.Remove(dbFile)
+    dbFile := filepath.Join(t.TempDir(), "test_handlers.db")
     
     // Initialize the database and add test data
     database, _ := db.InitDB(dbFile)

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,8 +21,9 @@ import (
 )
 
 func TestHandlers(t *testing.T) {
-	// Use a temporary database file for testing
-	dbFile := "test_handlers.database"
+	// Use a temporary database file for testing, in a directory which is
+	// removed afterwards along with the WAL and shared memory files.
+	dbFile := filepath.Join(t.TempDir(), "test_handlers.database")
 
 	testTitle := "Test Title"
 	testDescription := "Test Description"
@@ -32,7 +33,6 @@ func TestHandlers(t *testing.T) {
 	require.NoError(t, err, "Failed to initialize database")
 	t.Cleanup(func() {
 		_ = database.Close()
-		_ = os.Remove(dbFile)
 	})
 
 	handler := newHandlers("../../..", database, "", true).Routes()
