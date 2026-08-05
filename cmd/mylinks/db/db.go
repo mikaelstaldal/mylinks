@@ -4,11 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"fmt"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -37,9 +36,10 @@ const connectionOptions = "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
 // for the busy timeout.
 const maxOpenConns = 8
 
-// maxIdleConns keeps a couple of connections around for the common case,
-// rather than holding all maxOpenConns open forever.
-const maxIdleConns = 2
+// maxIdleConns matches maxOpenConns: connections to a local file are cheap to
+// keep but not to churn, since reopening one re-applies the pragmas above and
+// re-maps the WAL shared memory index.
+const maxIdleConns = maxOpenConns
 
 // Link represents a saved web link.
 type Link struct {
@@ -74,6 +74,13 @@ func InitDB(databaseFile string) (*DB, error) {
 	}
 	db.SetMaxOpenConns(maxOpenConns)
 	db.SetMaxIdleConns(maxIdleConns)
+	// Leaving the database open on a failure here would leave its WAL file
+	// behind as well.
+	defer func() {
+		if err != nil {
+			_ = db.Close()
+		}
+	}()
 
 	if err = db.Ping(); err != nil {
 		return nil, err
@@ -151,8 +158,8 @@ func ensureWritable(db *sql.DB) error {
 }
 
 // GetAllLinks returns all links from the database.
-func (db *DB) GetAllLinks() ([]Link, error) {
-	rows, err := db.Query("SELECT id, url, title, description, added_at FROM links ORDER BY added_at DESC")
+func (db *DB) GetAllLinks(ctx context.Context) ([]Link, error) {
+	rows, err := db.QueryContext(ctx, "SELECT id, url, title, description, added_at FROM links ORDER BY added_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +181,8 @@ func (db *DB) GetAllLinks() ([]Link, error) {
 }
 
 // Search returns links from the database matching a search string.
-func (db *DB) Search(s string) ([]Link, error) {
-	rows, err := db.Query(`
+func (db *DB) Search(ctx context.Context, s string) ([]Link, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT l.id, l.url, l.title, l.description, l.added_at
 		FROM links_fts f INNER JOIN links l ON l.id=f.rowid
 		WHERE links_fts MATCH ? ORDER BY rank
@@ -201,8 +208,8 @@ func (db *DB) Search(s string) ([]Link, error) {
 }
 
 // AddLink adds a new link to the database.
-func (db *DB) AddLink(url, title, description string, body []byte) (int64, error) {
-	tx, err := db.Begin()
+func (db *DB) AddLink(ctx context.Context, url, title, description string, body []byte) (int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +217,7 @@ func (db *DB) AddLink(url, title, description string, body []byte) (int64, error
 		_ = tx.Rollback()
 	}(tx)
 
-	result, err := tx.Exec("INSERT INTO links (url, title, description) VALUES (?, ?, ?)", url, title, description)
+	result, err := tx.ExecContext(ctx, "INSERT INTO links (url, title, description) VALUES (?, ?, ?)", url, title, description)
 	if err != nil {
 		var sqliteErr *sqlite.Error
 		if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
@@ -224,7 +231,7 @@ func (db *DB) AddLink(url, title, description string, body []byte) (int64, error
 		return 0, err
 	}
 
-	_, err = tx.Exec("INSERT INTO links_fts(rowid, title, description, body) VALUES (?, ?, ?, ?)", id, title, description, body)
+	_, err = tx.ExecContext(ctx, "INSERT INTO links_fts(rowid, title, description, body) VALUES (?, ?, ?, ?)", id, title, description, body)
 	if err != nil {
 		return 0, err
 	}
@@ -239,9 +246,9 @@ func (db *DB) AddLink(url, title, description string, body []byte) (int64, error
 
 // GetLink returns a single link from the database,
 // returns ErrNotFound if no row with the given id is found.
-func (db *DB) GetLink(id int64) (Link, error) {
+func (db *DB) GetLink(ctx context.Context, id int64) (Link, error) {
 	var link Link
-	err := db.QueryRow("SELECT id, url, title, description, added_at FROM links WHERE id = ?", id).
+	err := db.QueryRowContext(ctx, "SELECT id, url, title, description, added_at FROM links WHERE id = ?", id).
 		Scan(&link.ID, &link.URL, &link.Title, &link.Description, &link.AddedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -254,8 +261,8 @@ func (db *DB) GetLink(id int64) (Link, error) {
 }
 
 // DeleteLink deletes a link from the database.
-func (db *DB) DeleteLink(id int64) error {
-	result, err := db.Exec("DELETE FROM links WHERE id = ?", id)
+func (db *DB) DeleteLink(ctx context.Context, id int64) error {
+	result, err := db.ExecContext(ctx, "DELETE FROM links WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
@@ -270,8 +277,8 @@ func (db *DB) DeleteLink(id int64) error {
 }
 
 // UpdateLink updates a link in the database.
-func (db *DB) UpdateLink(id int64, title string, description string) error {
-	result, err := db.Exec("UPDATE links SET title = ?, description = ? WHERE id = ?", title, description, id)
+func (db *DB) UpdateLink(ctx context.Context, id int64, title string, description string) error {
+	result, err := db.ExecContext(ctx, "UPDATE links SET title = ?, description = ? WHERE id = ?", title, description, id)
 	if err != nil {
 		return err
 	}

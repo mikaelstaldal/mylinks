@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -202,7 +203,7 @@ func TestHandlers(t *testing.T) {
 		assert.Contains(t, string(body), "Updated Description", "Response doesn't contain the updated description")
 
 		// Verify the link was actually updated in the database
-		updatedLink, err := database.GetLink(linkId)
+		updatedLink, err := database.GetLink(t.Context(), linkId)
 		require.NoError(t, err, "Failed to get updated link")
 		assert.Equal(t, "Updated Title", updatedLink.Title, "Link title was not updated in database")
 		assert.Equal(t, "Updated Description", updatedLink.Description, "Link description was not updated in database")
@@ -226,7 +227,7 @@ func TestHandlers(t *testing.T) {
 		assert.Equal(t, "Updated Description", data.Description)
 
 		// Verify the link was actually updated in the database
-		updatedLink, err := database.GetLink(linkId)
+		updatedLink, err := database.GetLink(t.Context(), linkId)
 		require.NoError(t, err, "Failed to get updated link")
 		assert.Equal(t, "Updated Title", updatedLink.Title, "Link title was not updated in database")
 		assert.Equal(t, "Updated Description", updatedLink.Description, "Link description was not updated in database")
@@ -279,7 +280,7 @@ func TestHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
 
 		// Verify link was deleted
-		_, err = database.GetLink(1)
+		_, err = database.GetLink(t.Context(), 1)
 		assert.Error(t, err, "Link should have been deleted")
 	})
 
@@ -479,7 +480,7 @@ func Test_extractTitleAndDescriptionAndBodyFromURL(t *testing.T) {
 			defer server.Close()
 
 			parsedURL, _ := url.Parse(server.URL)
-			title, description, body, err := handlers.extractTitleAndDescriptionAndBodyFromURL(parsedURL)
+			title, description, body, err := handlers.extractTitleAndDescriptionAndBodyFromURL(t.Context(), parsedURL)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -551,4 +552,53 @@ func Test_extractTitleFromURL(t *testing.T) {
 			assert.Equal(t, tt.expected, title)
 		})
 	}
+}
+
+// TestWriteContext verifies that a database write is not abandoned when the
+// client goes away, but is still bounded by a deadline.
+func TestWriteContext(t *testing.T) {
+	requestContext, clientGoesAway := context.WithCancel(t.Context())
+
+	ctx, cancel := writeContext(requestContext)
+	defer cancel()
+
+	clientGoesAway()
+
+	assert.NoError(t, ctx.Err(), "The write was abandoned when the client went away")
+	deadline, hasDeadline := ctx.Deadline()
+	assert.True(t, hasDeadline, "The write is not bounded by a deadline")
+	assert.False(t, deadline.After(time.Now().Add(databaseWriteTimeout)), "Deadline too far away")
+}
+
+// TestAddLinkAbandonedByClient verifies that the page is not fetched for a
+// request which the client has already given up on.
+func TestAddLinkAbandonedByClient(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "test_abandoned.database")
+	database, err := db.InitDB(dbFile)
+	require.NoError(t, err, "Failed to initialize database")
+	t.Cleanup(func() {
+		_ = database.Close()
+	})
+	handler := newHandlers("../../..", database, "", true).Routes()
+
+	var fetched bool
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched = true
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><head><title>Title</title></head><body>Body</body></html>")
+	}))
+	defer mockServer.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, "POST", "/", strings.NewReader("url="+mockServer.URL))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, _ := testRequest(t, handler, req)
+
+	assert.Equal(t, http.StatusBadRequest, response.StatusCode, "Handlers returned wrong status code")
+	assert.False(t, fetched, "The URL was fetched for a request the client had given up on")
+
+	links, err := database.GetAllLinks(t.Context())
+	require.NoError(t, err, "Failed to get links")
+	assert.Empty(t, links, "Got %d links, expected none", len(links))
 }

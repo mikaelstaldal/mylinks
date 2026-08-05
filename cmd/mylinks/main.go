@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"syscall"
 	"time"
 
 	"github.com/mikaelstaldal/go-server-common/auth"
@@ -19,7 +22,19 @@ import (
 const databaseName = "mylinks.sqlite"
 const screenshotsDir = "screenshots"
 
+// shutdownTimeout bounds how long in-flight requests get to finish on
+// shutdown. It exceeds the server write timeout, so a request which is
+// allowed to run to completion is not cut short here.
+const shutdownTimeout = 25 * time.Second
+
 func main() {
+	os.Exit(run())
+}
+
+// run is separate from main so that deferred cleanup, notably closing the
+// database, runs before the process exits. The exit code is a named return so
+// that the deferred cleanup can report a failure of its own.
+func run() (exitCode int) {
 	// Determine the path of executable
 	executablePath, err := os.Executable()
 	if err != nil {
@@ -39,7 +54,7 @@ func main() {
 
 	if *version {
 		printVersion()
-		return
+		return 0
 	}
 
 	if *port < 1 || *port > 65535 {
@@ -73,12 +88,6 @@ func main() {
 		}
 	}
 
-	// Initialize database
-	database, err := db.InitDB(databaseFile)
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-
 	var authMiddleware func(http.Handler) http.Handler
 	if *basicAuthFile != "" {
 		htpasswd, err := auth.LoadHtpasswd(*basicAuthFile)
@@ -89,13 +98,26 @@ func main() {
 		log.Printf("basic authentication enabled")
 	}
 
-	// Initialize handlers
-	mux := web.NewHandlers(executableDir, database, filepath.Join(*dataDir, screenshotsDir)).Routes()
-
 	serverOrigin, err := csrf.ResolveServerOrigin(*publicURL, *addr, *port)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+
+	// Initialize database, once everything which can fail before it is done
+	database, err := db.InitDB(databaseFile)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer func() {
+		// Closing the database checkpoints and removes its WAL file
+		if err := database.Close(); err != nil {
+			log.Printf("Failed to close database: %v", err)
+			exitCode = 1
+		}
+	}()
+
+	// Initialize handlers
+	mux := web.NewHandlers(executableDir, database, filepath.Join(*dataDir, screenshotsDir)).Routes()
 	var root = csrf.Middleware(serverOrigin)(mux)
 
 	if authMiddleware != nil {
@@ -112,9 +134,35 @@ func main() {
 		WriteTimeout: 20 * time.Second,
 		IdleTimeout:  time.Minute,
 	}
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+
+	// Shut down on SIGINT/SIGTERM, letting in-flight requests finish.
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	serverError := make(chan error, 1)
+	go func() {
+		serverError <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverError:
+		log.Printf("Server error: %v", err)
+		exitCode = 1
+	case <-signalContext.Done():
+		// A second signal should kill the process rather than be ignored.
+		stopSignals()
+		log.Printf("Shutting down")
+		shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			// Requests may still hold database connections, in which case
+			// closing the database leaves the WAL file behind.
+			log.Printf("Failed to shut down server gracefully: %v", err)
+			exitCode = 1
+		}
 	}
+
+	return exitCode
 }
 
 func printVersion() {

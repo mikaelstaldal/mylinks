@@ -35,6 +35,18 @@ const maxTitleLength = 250
 const maxDescriptionLength = 1020
 const maxBodyLength = 1000000
 
+// databaseWriteTimeout bounds how long a database write may take, including
+// waiting for a free connection from the pool.
+const databaseWriteTimeout = 10 * time.Second
+
+// writeContext returns the context to use for a database write. Reads are
+// abandoned when the client goes away, but writes are not: the user asked for
+// the change, and for a link that also means throwing away an already
+// completed fetch of the page. The timeout still bounds the wait.
+func writeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), databaseWriteTimeout)
+}
+
 // Handlers holds dependencies for the handlers.
 type Handlers struct {
 	executableDir  string
@@ -234,7 +246,7 @@ func (h *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
 
 // saveLink fetches the URL, extracts metadata, and saves it to the database.
 // Returns the link ID, an error message, and an HTTP status code.
-func (h *Handlers) saveLink(urlToSave *url.URL) (int64, string, int) {
+func (h *Handlers) saveLink(ctx context.Context, urlToSave *url.URL) (int64, string, int) {
 	var title, description string
 	var body []byte
 	var screenshot []byte
@@ -245,13 +257,15 @@ func (h *Handlers) saveLink(urlToSave *url.URL) (int64, string, int) {
 			return 0, fmt.Sprintf("Failed to load URL: %v", err), http.StatusBadRequest
 		}
 	} else {
-		title, description, body, err = h.extractTitleAndDescriptionAndBodyFromURL(urlToSave)
+		title, description, body, err = h.extractTitleAndDescriptionAndBodyFromURL(ctx, urlToSave)
 		if err != nil {
 			return 0, fmt.Sprintf("Failed to load URL: %v", err), http.StatusBadRequest
 		}
 	}
 
-	id, err := h.database.AddLink(urlToSave.String(), title, description, body)
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
+	id, err := h.database.AddLink(writeCtx, urlToSave.String(), title, description, body)
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
 			return 0, "URL already exists", http.StatusConflict
@@ -270,7 +284,7 @@ func (h *Handlers) saveLink(urlToSave *url.URL) (int64, string, int) {
 
 // addLink handles the request to add a new link.
 func (h *Handlers) addLink(w http.ResponseWriter, r *http.Request, urlToSave *url.URL) {
-	id, errMsg, status := h.saveLink(urlToSave)
+	id, errMsg, status := h.saveLink(r.Context(), urlToSave)
 	if errMsg != "" {
 		sendError(w, errMsg, status)
 		return
@@ -287,7 +301,9 @@ func (h *Handlers) addNote(w http.ResponseWriter, r *http.Request, title string,
 	// Generate a pseudo URL to satisfy the NOT NULL UNIQUE constraint and keep entries distinguishable.
 	urlToSave := fmt.Sprintf("note:%d", time.Now().UnixMilli())
 
-	id, err := h.database.AddLink(urlToSave, title, description, []byte(note))
+	writeCtx, cancel := writeContext(r.Context())
+	defer cancel()
+	id, err := h.database.AddLink(writeCtx, urlToSave, title, description, []byte(note))
 	if err != nil {
 		sendError(w, fmt.Sprintf("Failed to add note: %v", err), http.StatusInternalServerError)
 		return
@@ -319,7 +335,7 @@ func (h *Handlers) BookmarkletSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, errMsg, status := h.saveLink(parsedURL)
+	_, errMsg, status := h.saveLink(r.Context(), parsedURL)
 	if errMsg != "" {
 		h.render(w, "bookmarklet-result.html", struct {
 			Success bool
@@ -345,8 +361,8 @@ func (h *Handlers) validateURL(u *url.URL) error {
 }
 
 // extractTitleAndDescriptionAndBodyFromURL fetches the URL and extracts the page title from HTML.
-func (h *Handlers) extractTitleAndDescriptionAndBodyFromURL(url *url.URL) (string, string, []byte, error) {
-	req, err := http.NewRequest("GET", url.String(), nil)
+func (h *Handlers) extractTitleAndDescriptionAndBodyFromURL(ctx context.Context, url *url.URL) (string, string, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -542,6 +558,9 @@ func (h *Handlers) extractTitleFromURL(url *url.URL) string {
 	return title
 }
 
+// extractTitleAndDescriptionAndBodyAndScreenshotFromURL does not take a
+// context: the browser context is shared between requests, so aborting a
+// navigation halfway would leave it in an undefined state for other requests.
 func (h *Handlers) extractTitleAndDescriptionAndBodyAndScreenshotFromURL(url *url.URL) (string, string, []byte, []byte, error) {
 	response, err := chromedp.RunResponse(h.browserContext,
 		chromedp.Navigate(url.String()),
@@ -676,7 +695,9 @@ func (h *Handlers) EditLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.database.UpdateLink(id, title, description)
+	writeCtx, cancel := writeContext(r.Context())
+	defer cancel()
+	err = h.database.UpdateLink(writeCtx, id, title, description)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
@@ -690,7 +711,7 @@ func (h *Handlers) EditLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) getLink(w http.ResponseWriter, r *http.Request, id int64) {
-	dbLink, err := h.database.GetLink(id)
+	dbLink, err := h.database.GetLink(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
@@ -724,7 +745,9 @@ func (h *Handlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.database.DeleteLink(id)
+	writeCtx, cancel := writeContext(r.Context())
+	defer cancel()
+	err = h.database.DeleteLink(writeCtx, id)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
@@ -745,13 +768,13 @@ func (h *Handlers) listLinks(w http.ResponseWriter, r *http.Request, status int)
 	var dbLinks []db.Link
 	var err error
 	if search != "" {
-		dbLinks, err = h.database.Search(search)
+		dbLinks, err = h.database.Search(r.Context(), search)
 		if err != nil {
 			sendError(w, fmt.Sprintf("Failed to search: %v\n", err), http.StatusInternalServerError)
 			return
 		}
 	} else {
-		dbLinks, err = h.database.GetAllLinks()
+		dbLinks, err = h.database.GetAllLinks(r.Context())
 		if err != nil {
 			sendError(w, fmt.Sprintf("Failed to get links: %v\n", err), http.StatusInternalServerError)
 			return

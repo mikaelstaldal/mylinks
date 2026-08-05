@@ -73,7 +73,7 @@ func TestListLinks(t *testing.T) {
     
     // Initialize the database and add test data
     database, _ := db.InitDB(dbFile)
-    database.AddLink("https://example.com", "Example Website", "", nil)
+    database.AddLink(t.Context(), "https://example.com", "Example Website", "", nil)
     
     // Create handler
     h := NewHandlers(".", database, "")
@@ -93,15 +93,19 @@ func TestListLinks(t *testing.T) {
 ## Additional Development Information
 
 ### Project Structure
-- `cmd/mylinks/main.go`: Application entry point, server configuration, and route setup
+- `cmd/mylinks/main.go`: Application entry point, server configuration, and shutdown
+  - `main_test.go`: Tests which run the built server, for startup and shutdown
 - `cmd/mylinks/db/`: Database operations and models
   - `db.go`: Database initialization and CRUD operations
   - `db_test.go`: Tests for database operations
 - `cmd/mylinks/web/`: HTTP request handlers
-  - `handlers.go`: Handler implementations for routes
+  - `handlers.go`: Handler implementations for routes, and route setup
+  - `middleware.go`: Common response headers
   - `handlers_test.go`: Tests for handlers
 - `ui/templates/`: HTML templates
-  - `index.html`: Main page
+  - `index.html`: Main page, `links.html`: The list of links
+  - `link-with-screenshot.html` / `link-without-screenshot.html`: A single link
+  - `bookmarklet-result.html`: Result of saving from the bookmarklet
 - `ui/static/`: Static assets (CSS, JavaScript, etc.)
 
 ### Code Style Guidelines
@@ -110,17 +114,34 @@ func TestListLinks(t *testing.T) {
 - Add comments for non-obvious code sections
 - Keep functions focused on a single responsibility
 - Use proper error handling with descriptive error messages
+- Database operations take a `context.Context` as their first argument, pass
+  `r.Context()` from handlers so that work is abandoned when the client goes away
 
 ### Database Schema
-The application uses a single SQLite table:
+Links are stored in a single SQLite table:
 ```sql
 CREATE TABLE IF NOT EXISTS links (
     id INTEGER PRIMARY KEY,
-    url TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
+    description TEXT NOT NULL,
     added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 ```
+
+Full text search uses a contentless FTS5 index, which also holds the page body.
+It is populated by `AddLink` and cleaned up by a trigger on delete:
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS links_fts USING fts5(title, description, body, content='', contentless_delete=1);
+
+CREATE TRIGGER IF NOT EXISTS links_ad AFTER DELETE ON links BEGIN
+  DELETE FROM links_fts WHERE ROWID=old.id;
+END;
+```
+
+The database is opened in WAL mode with a busy timeout, see `connectionOptions`
+in `cmd/mylinks/db/db.go`. This means `mylinks.sqlite-wal` and
+`mylinks.sqlite-shm` exist alongside the database file while it is open.
 
 ### Adding New Features
 When adding new features:
