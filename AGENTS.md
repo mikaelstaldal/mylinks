@@ -130,14 +130,37 @@ CREATE TABLE IF NOT EXISTS links (
 ```
 
 Full text search uses a contentless FTS5 index, which also holds the page body.
-It is populated by `AddLink` and cleaned up by a trigger on delete:
+It is populated by `AddLink`, rewritten by `UpdateLink`, and cleaned up by a
+trigger on delete:
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS links_fts USING fts5(title, description, body, content='', contentless_delete=1);
 
-CREATE TRIGGER IF NOT EXISTS links_ad AFTER DELETE ON links BEGIN
+CREATE TABLE IF NOT EXISTS link_bodies (
+    link_id INTEGER PRIMARY KEY,
+    body BLOB NOT NULL
+);
+
+CREATE TRIGGER links_ad AFTER DELETE ON links BEGIN
   DELETE FROM links_fts WHERE ROWID=old.id;
+  DELETE FROM link_bodies WHERE link_id=old.id;
 END;
 ```
+
+A contentless index cannot be read back, so an FTS row can only be written in
+full, never updated in place. `link_bodies` keeps the page body so that
+`UpdateLink` can delete and re-insert the FTS row with the new title and
+description without dropping body matching.
+
+A link has no row in `link_bodies` if its page yielded no body, or if it was
+added before the table existed. `HasBody` reports on that, and `EditLink` then
+fetches the page again to get a body to pass to `UpdateLink`, so that editing
+such a link makes it searchable rather than leaving it without a body forever.
+Refetching is best effort: the user asked to edit the link, not to fetch it, so
+a failure is logged and the edit proceeds.
+
+A note has no page to fetch, its text is its body. It is re-indexed from the
+edited text on every edit, rather than carried forward, so that an edited note
+stops matching the text it no longer holds.
 
 The database is opened in WAL mode with a busy timeout, see `connectionOptions`
 in `cmd/mylinks/db/db.go`. This means `mylinks.sqlite-wal` and

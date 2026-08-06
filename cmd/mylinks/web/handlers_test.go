@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -568,6 +569,111 @@ func TestWriteContext(t *testing.T) {
 	deadline, hasDeadline := ctx.Deadline()
 	assert.True(t, hasDeadline, "The write is not bounded by a deadline")
 	assert.False(t, deadline.After(time.Now().Add(databaseWriteTimeout)), "Deadline too far away")
+}
+
+// TestEditLinkRefetchesMissingBody verifies that editing a link which has no
+// body stored fetches the page again, so that the body stays searchable, and
+// that a link which has one is left alone.
+func TestEditLinkRefetchesMissingBody(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "test_refetch.database")
+	database, err := db.InitDB(dbFile)
+	require.NoError(t, err, "Failed to initialize database")
+	t.Cleanup(func() {
+		_ = database.Close()
+	})
+	handler := newHandlers("../../..", database, "", true).Routes()
+
+	var fetches atomic.Int64
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><head><title>Title</title></head><body>Some indescribable body text</body></html>")
+	}))
+	defer mockServer.Close()
+
+	// A link as added before bodies were stored: no body to carry through an edit.
+	id, err := database.AddLink(t.Context(), mockServer.URL, "Old title", "Old description", nil)
+	require.NoError(t, err, "Failed to add link")
+
+	patch := func(t *testing.T, id int64, form string) *http.Response {
+		req := httptest.NewRequest("PATCH", fmt.Sprintf("/%d", id), strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response, _ := testRequest(t, handler, req)
+		return response
+	}
+
+	response := patch(t, id, "title=New title&description=New description")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
+	assert.Equal(t, int64(1), fetches.Load(), "Expected the page to be fetched again")
+
+	hasBody, err := database.HasBody(t.Context(), id)
+	require.NoError(t, err, "Failed to check for a body")
+	assert.True(t, hasBody, "Expected the refetched body to be stored")
+
+	links, err := database.Search(t.Context(), "indescribable")
+	require.NoError(t, err, "Failed to search")
+	assert.Len(t, links, 1, "Got %d links, expected the refetched body to be searchable", len(links))
+
+	// A second edit has a body to carry forward, and must not fetch again.
+	response = patch(t, id, "title=Newer title&description=Newer description")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
+	assert.Equal(t, int64(1), fetches.Load(), "Expected no fetch for a link which has a body")
+
+	links, err = database.Search(t.Context(), "indescribable")
+	require.NoError(t, err, "Failed to search")
+	assert.Len(t, links, 1, "Got %d links, expected the body to be carried over", len(links))
+
+	// A note has no page to fetch, its text is its body.
+	noteId, err := database.AddLink(t.Context(), "note:1", "Note title", "Old note text", nil)
+	require.NoError(t, err, "Failed to add note")
+
+	response = patch(t, noteId, "title=Note title&description=An unmistakable note")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
+	assert.Equal(t, int64(1), fetches.Load(), "Expected no fetch for a note")
+
+	links, err = database.Search(t.Context(), "unmistakable")
+	require.NoError(t, err, "Failed to search")
+	assert.Len(t, links, 1, "Got %d links, expected the note text to be searchable", len(links))
+
+	// A note which has a body is re-indexed from its text as well, rather than
+	// keeping the text it no longer holds.
+	storedNoteId, err := database.AddLink(t.Context(), "note:2", "Stored note", "An inimitable note", []byte("An inimitable note"))
+	require.NoError(t, err, "Failed to add note")
+
+	response = patch(t, storedNoteId, "title=Stored note&description=A rewritten note")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
+
+	links, err = database.Search(t.Context(), "rewritten")
+	require.NoError(t, err, "Failed to search")
+	assert.Len(t, links, 1, "Got %d links, expected the new note text to be searchable", len(links))
+	links, err = database.Search(t.Context(), "inimitable")
+	require.NoError(t, err, "Failed to search")
+	assert.Empty(t, links, "Expected the replaced note text to be gone from the index")
+
+	// Emptying a note must not leave its previous text searchable either.
+	response = patch(t, storedNoteId, "title=Stored note&description=")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "Handlers returned wrong status code")
+
+	links, err = database.Search(t.Context(), "rewritten")
+	require.NoError(t, err, "Failed to search")
+	assert.Empty(t, links, "Expected the emptied note text to be gone from the index")
+
+	// A page which can no longer be fetched must not fail the edit.
+	goneServer := httptest.NewServer(http.NotFoundHandler())
+	goneURL := goneServer.URL
+	goneServer.Close()
+	goneId, err := database.AddLink(t.Context(), goneURL, "Gone title", "Gone description", nil)
+	require.NoError(t, err, "Failed to add link")
+
+	response = patch(t, goneId, "title=Still edited&description=Gone description")
+	assert.Equal(t, http.StatusOK, response.StatusCode, "An unreachable page failed the edit")
+
+	link, err := database.GetLink(t.Context(), goneId)
+	require.NoError(t, err, "Failed to get link")
+	assert.Equal(t, "Still edited", link.Title, "The edit was not applied")
+	hasBody, err = database.HasBody(t.Context(), goneId)
+	require.NoError(t, err, "Failed to check for a body")
+	assert.False(t, hasBody, "Expected no body for an unreachable page")
 }
 
 // TestAddLinkAbandonedByClient verifies that the page is not fetched for a

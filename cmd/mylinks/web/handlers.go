@@ -282,6 +282,66 @@ func (h *Handlers) saveLink(ctx context.Context, urlToSave *url.URL) (int64, str
 	return id, "", http.StatusCreated
 }
 
+// refetchBody returns a body to store for a link which has none, or nil to keep
+// what is stored. Links added before bodies were stored separately from the
+// contentless FTS index have no body to carry through an edit, so the page is
+// fetched again to keep it searchable.
+//
+// This is best effort: the user asked to edit the link, not to fetch it, so a
+// failure here is logged and the edit proceeds without a body.
+func (h *Handlers) refetchBody(ctx context.Context, id int64, description string) []byte {
+	link, err := h.database.GetLink(ctx, id)
+	if err != nil {
+		// A missing link is reported by the update itself.
+		if !errors.Is(err, db.ErrNotFound) {
+			log.Printf("Unable to look up link %d to refetch its body: %v", id, err)
+		}
+		return nil
+	}
+
+	if isNote(link.URL) {
+		// A note has no page to fetch, its text is its body. It is rewritten on
+		// every edit, unlike a page body: an edited note must not keep matching
+		// the text it no longer holds. make gives a non-nil slice for an empty
+		// note, which stores it as an empty body rather than keeping the old one.
+		body := make([]byte, len(description))
+		copy(body, description)
+		return body
+	}
+
+	hasBody, err := h.database.HasBody(ctx, id)
+	if err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			log.Printf("Unable to check whether link %d has a body: %v", id, err)
+		}
+		return nil
+	}
+	if hasBody {
+		return nil
+	}
+
+	parsedURL, err := url.Parse(link.URL)
+	if err != nil || h.validateURL(parsedURL) != nil {
+		log.Printf("Not refetching the body of link %d, %s is no longer a valid URL", id, link.URL)
+		return nil
+	}
+
+	var body []byte
+	if h.browserContext != nil {
+		// The screenshot is a by-product here, the one taken when the link was
+		// added is left alone.
+		_, _, body, _, err = h.extractTitleAndDescriptionAndBodyAndScreenshotFromURL(parsedURL)
+	} else {
+		_, _, body, err = h.extractTitleAndDescriptionAndBodyFromURL(ctx, parsedURL)
+	}
+	if err != nil {
+		log.Printf("Unable to refetch %s to index its body: %v", link.URL, err)
+		return nil
+	}
+
+	return body
+}
+
 // addLink handles the request to add a new link.
 func (h *Handlers) addLink(w http.ResponseWriter, r *http.Request, urlToSave *url.URL) {
 	id, errMsg, status := h.saveLink(r.Context(), urlToSave)
@@ -695,9 +755,11 @@ func (h *Handlers) EditLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body := h.refetchBody(r.Context(), id, description)
+
 	writeCtx, cancel := writeContext(r.Context())
 	defer cancel()
-	err = h.database.UpdateLink(writeCtx, id, title, description)
+	err = h.database.UpdateLink(writeCtx, id, title, description, body)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)

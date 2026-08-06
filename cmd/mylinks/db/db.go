@@ -108,10 +108,25 @@ func InitDB(databaseFile string) (*DB, error) {
 	}
 
 	_, err = tx.Exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS links_fts USING fts5(title, description, body, content='', contentless_delete=1);        
-		-- Trigger to keep the FTS index up to date.
-		CREATE TRIGGER IF NOT EXISTS links_ad AFTER DELETE ON links BEGIN
+		CREATE VIRTUAL TABLE IF NOT EXISTS links_fts USING fts5(title, description, body, content='', contentless_delete=1);
+
+		-- The FTS index is contentless, so the indexed text cannot be read back
+		-- out of it. The page body is kept here as well, so that UpdateLink can
+		-- rebuild the FTS row for a link without losing body matching. A link
+		-- whose page yielded no body, and one added before this table existed,
+		-- has no row here, which is what HasBody reports on.
+		CREATE TABLE IF NOT EXISTS link_bodies (
+			link_id INTEGER PRIMARY KEY,
+			body BLOB NOT NULL
+		);
+
+		-- Trigger to keep the FTS index and the bodies up to date.
+		-- Dropped first, so that an existing database picks up the current
+		-- definition rather than keeping the one it was created with.
+		DROP TRIGGER IF EXISTS links_ad;
+		CREATE TRIGGER links_ad AFTER DELETE ON links BEGIN
 		  DELETE FROM links_fts WHERE ROWID=old.id;
+		  DELETE FROM link_bodies WHERE link_id=old.id;
 		END;
 	`)
 	if err != nil {
@@ -236,6 +251,13 @@ func (db *DB) AddLink(ctx context.Context, url, title, description string, body 
 		return 0, err
 	}
 
+	if body != nil {
+		_, err = tx.ExecContext(ctx, "INSERT INTO link_bodies (link_id, body) VALUES (?, ?)", id, body)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		return 0, err
@@ -276,9 +298,37 @@ func (db *DB) DeleteLink(ctx context.Context, id int64) error {
 	return nil
 }
 
-// UpdateLink updates a link in the database.
-func (db *DB) UpdateLink(ctx context.Context, id int64, title string, description string) error {
-	result, err := db.ExecContext(ctx, "UPDATE links SET title = ?, description = ? WHERE id = ?", title, description, id)
+// HasBody reports whether a body is stored for a link, so that a caller which
+// is able to fetch the page again can supply one to UpdateLink.
+// Returns ErrNotFound if no row with the given id is found.
+func (db *DB) HasBody(ctx context.Context, id int64) (bool, error) {
+	var hasBody bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM link_bodies WHERE link_id = l.id)
+		FROM links l WHERE l.id = ?
+		`, id).Scan(&hasBody)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, ErrNotFound
+	case err != nil:
+		return false, err
+	default:
+		return hasBody, nil
+	}
+}
+
+// UpdateLink updates a link in the database, and its FTS index entry.
+// A nil body keeps the stored one, pass a non-nil body to replace it.
+func (db *DB) UpdateLink(ctx context.Context, id int64, title string, description string, body []byte) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func(tx *sql.Tx) {
+		_ = tx.Rollback()
+	}(tx)
+
+	result, err := tx.ExecContext(ctx, "UPDATE links SET title = ?, description = ? WHERE id = ?", title, description, id)
 	if err != nil {
 		return err
 	}
@@ -289,5 +339,34 @@ func (db *DB) UpdateLink(ctx context.Context, id int64, title string, descriptio
 	if rowsAffected == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	if body != nil {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO link_bodies (link_id, body) VALUES (?, ?)
+			ON CONFLICT (link_id) DO UPDATE SET body = excluded.body
+			`, id, body)
+		if err != nil {
+			return err
+		}
+	} else {
+		// The FTS index is contentless, so the row has to be written in full
+		// rather than updated in place. The body is not part of the edit, but
+		// must be supplied again to keep it searchable; it is missing for links
+		// added before link_bodies existed.
+		err = tx.QueryRowContext(ctx, "SELECT body FROM link_bodies WHERE link_id = ?", id).Scan(&body)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM links_fts WHERE rowid = ?", id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO links_fts(rowid, title, description, body) VALUES (?, ?, ?, ?)", id, title, description, body)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

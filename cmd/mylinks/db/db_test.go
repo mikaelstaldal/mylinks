@@ -107,12 +107,78 @@ func TestDB(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound, "Got %v, expected ErrNotFound for fetching non-existent link", err)
 
 	// Test updating a link
-	err = database.UpdateLink(t.Context(), id, "Updated title", "Updated description")
+	err = database.UpdateLink(t.Context(), id, "Updated title", "Updated description", nil)
 	require.NoError(t, err, "Failed to update link")
 	link, err = database.GetLink(t.Context(), id)
 	assert.NoError(t, err, "Failed to get updated link")
 	assert.Equal(t, "Updated title", link.Title)
 	assert.Equal(t, "Updated description", link.Description)
+
+	// The FTS index must follow the edit: the new text is searchable, the
+	// replaced text is not, and the body is still matched.
+	linksSearch, err = database.Search(t.Context(), "Updated")
+	require.NoError(t, err, "Failed to search for updated link")
+	assert.Len(t, linksSearch, 1, "Got %d links, expected the updated link", len(linksSearch))
+	assert.Equal(t, "Updated title", linksSearch[0].Title)
+
+	linksSearch, err = database.Search(t.Context(), "Example")
+	require.NoError(t, err, "Failed to search for replaced title")
+	assert.Empty(t, linksSearch, "Expected the replaced title to be gone from the index")
+
+	linksSearch, err = database.Search(t.Context(), "peculiar")
+	require.NoError(t, err, "Failed to search body after update")
+	assert.Len(t, linksSearch, 1, "Got %d links, expected the body to still be indexed", len(linksSearch))
+	assert.Equal(t, "Updated title", linksSearch[0].Title)
+
+	// Updating a link without a body must not fail.
+	err = database.UpdateLink(t.Context(), id3, "Updated PDF", "application/pdf", nil)
+	require.NoError(t, err, "Failed to update link without a body")
+	linksSearch, err = database.Search(t.Context(), "Updated")
+	require.NoError(t, err, "Failed to search after updating link without a body")
+	assert.Len(t, linksSearch, 2, "Got %d links, expected both updated links", len(linksSearch))
+
+	// Test updating a non-existing link
+	err = database.UpdateLink(t.Context(), 9999, "Nothing", "Nothing", nil)
+	assert.ErrorIs(t, err, ErrNotFound, "Got %v, expected ErrNotFound for updating non-existent link", err)
+
+	// Test which links have a body stored, so that a caller knows when a
+	// refetch is worthwhile
+	hasBody, err := database.HasBody(t.Context(), id)
+	require.NoError(t, err, "Failed to check for a body")
+	assert.True(t, hasBody, "Expected a body for a link added with one")
+	hasBody, err = database.HasBody(t.Context(), id3)
+	require.NoError(t, err, "Failed to check for a missing body")
+	assert.False(t, hasBody, "Expected no body for a link added without one")
+	_, err = database.HasBody(t.Context(), 9999)
+	assert.ErrorIs(t, err, ErrNotFound, "Got %v, expected ErrNotFound for a non-existent link", err)
+
+	// Test supplying a body on update, as a refetch does
+	err = database.UpdateLink(t.Context(), id3, "Updated PDF", "application/pdf", []byte("Refetched singular content"))
+	require.NoError(t, err, "Failed to update link with a refetched body")
+	hasBody, err = database.HasBody(t.Context(), id3)
+	require.NoError(t, err, "Failed to check for the refetched body")
+	assert.True(t, hasBody, "Expected the refetched body to be stored")
+	linksSearch, err = database.Search(t.Context(), "singular")
+	require.NoError(t, err, "Failed to search for the refetched body")
+	assert.Len(t, linksSearch, 1, "Got %d links, expected the refetched body to be indexed", len(linksSearch))
+	assert.Equal(t, url3, linksSearch[0].URL)
+
+	// A body supplied again replaces the stored one
+	err = database.UpdateLink(t.Context(), id3, "Updated PDF", "application/pdf", []byte("Replaced idiosyncratic content"))
+	require.NoError(t, err, "Failed to replace the body")
+	linksSearch, err = database.Search(t.Context(), "idiosyncratic")
+	require.NoError(t, err, "Failed to search for the replaced body")
+	assert.Len(t, linksSearch, 1, "Got %d links, expected the new body to be indexed", len(linksSearch))
+	linksSearch, err = database.Search(t.Context(), "singular")
+	require.NoError(t, err, "Failed to search for the previous body")
+	assert.Empty(t, linksSearch, "Expected the previous body to be gone from the index")
+
+	// A later update without a body carries the stored one forward
+	err = database.UpdateLink(t.Context(), id3, "Updated PDF again", "application/pdf", nil)
+	require.NoError(t, err, "Failed to update link after the refetch")
+	linksSearch, err = database.Search(t.Context(), "idiosyncratic")
+	require.NoError(t, err, "Failed to search for the carried over body")
+	assert.Len(t, linksSearch, 1, "Got %d links, expected the body to be carried over", len(linksSearch))
 
 	// Test deleting a link
 	err = database.DeleteLink(t.Context(), id)
@@ -126,6 +192,15 @@ func TestDB(t *testing.T) {
 	links, err = database.GetAllLinks(t.Context())
 	require.NoError(t, err, "Failed to get links after deletion")
 	assert.Len(t, links, 2, "Got %d links after deletion, expected 2", len(links))
+
+	// Verify the body was deleted along with the link
+	var bodies int
+	err = database.QueryRow("SELECT count(*) FROM link_bodies WHERE link_id = ?", id).Scan(&bodies)
+	require.NoError(t, err, "Failed to count bodies")
+	assert.Zero(t, bodies, "Expected the body to be deleted along with the link")
+	linksSearch, err = database.Search(t.Context(), "peculiar")
+	require.NoError(t, err, "Failed to search after deletion")
+	assert.Empty(t, linksSearch, "Expected the deleted link to be gone from the index")
 
 	// Close the database
 	err = database.Close()
@@ -227,7 +302,7 @@ func TestContextCancellation(t *testing.T) {
 	_, err = database.GetLink(ctx, 1)
 	assert.ErrorIs(t, err, context.Canceled, "GetLink ignored the context")
 
-	err = database.UpdateLink(ctx, 1, "Updated title", "Updated description")
+	err = database.UpdateLink(ctx, 1, "Updated title", "Updated description", nil)
 	assert.ErrorIs(t, err, context.Canceled, "UpdateLink ignored the context")
 
 	err = database.DeleteLink(ctx, 1)
