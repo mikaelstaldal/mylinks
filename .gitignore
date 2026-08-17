@@ -27,6 +27,10 @@ go.work.sum
 data/
 /mylinks
 
+# README tells you to create this in the repository root, with htpasswd, and it
+# holds the bcrypt hash of a password that guards the whole application.
+/pwfile
+
 ignored/
 .claude
 .junie
