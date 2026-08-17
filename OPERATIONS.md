@@ -23,7 +23,8 @@ This guide covers production installation of MyLinks on a Linux server, includin
 - A Linux server.
 - nginx (or another reverse proxy capable of TLS termination).
 - A valid TLS certificate for your domain (e.g. from Let's Encrypt).
-- Go 1.26+ if building from source; otherwise download a pre-built binary or use the Docker image.
+- Go if building from source, at least the version in the `go` directive of
+  `go.mod`; otherwise download a pre-built binary or use the Docker image.
 
 ---
 

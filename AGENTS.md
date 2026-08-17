@@ -5,7 +5,7 @@ This document provides essential information for developers working on the MyLin
 ## Build/Configuration Instructions
 
 ### Prerequisites
-- Go 1.26 or later
+- Go, at least the version in the `go` directive of `go.mod`
 - SQLite support (provided by modernc.org/sqlite)
 
 ### Building the Project

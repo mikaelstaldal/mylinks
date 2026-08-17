@@ -1,6 +1,6 @@
 module github.com/mikaelstaldal/mylinks
 
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
