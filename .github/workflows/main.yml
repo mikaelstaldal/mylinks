@@ -1,6 +1,10 @@
 # Builds the project and publishes the binary as a rolling `latest` release.
 name: Build
 
+# Work lands by pushing to main rather than through pull requests, so there is
+# no pre-merge gate to hang these jobs off: they report on what has already
+# landed. A bad commit turns the run red rather than being stopped from
+# arriving. Add `pull_request:` here if that ever changes.
 on:
   push:
     branches: [main]
@@ -8,9 +12,9 @@ on:
 permissions:
   contents: read
 
-# One deployment at a time, and never cancel one midway
+# One release at a time, and never cancel one midway
 concurrency:
-  group: pages
+  group: release
   cancel-in-progress: false
 
 jobs:

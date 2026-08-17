@@ -36,9 +36,33 @@ requirement rather than a suggestion. Two consequences:
 CI needs no change on a bump: `actions/setup-go` reads the version from
 `go.mod`.
 
+### Files that have to move together
+Beyond `go.mod` and the `Dockerfile` above, three couplings are held together
+by nothing but attention:
+
+- Adding a `COPY` to the `Dockerfile` means adding the same path to
+  `.dockerignore`, which is an allow list. Forgetting fails the image build,
+  so CI catches it, but the error names the missing file rather than the cause.
+- The `govulncheck` version is pinned in both `.github/workflows/main.yml` and
+  `.github/workflows/govulncheck.yml`. Bump both.
+- The `chromedp/headless-shell` digest in the `Dockerfile` is pinned and so is
+  frozen until someone raises it by hand. `govulncheck` scans the Go code, not
+  the image, and will never report anything about it, so nothing here notices
+  when that base image accumulates vulnerabilities.
+
 ### Configuration Options
 The application accepts the following command-line flags:
-- `-port <number>`: Specify the HTTP server port (default: 8080)
+- `-port <number>`: port to listen on (default: 8080)
+- `-addr <address>`: address to listen on (default: 127.0.0.1)
+- `-data <directory>`: directory to store data in (default: data)
+- `-basic-auth-file <file>`: enable HTTP basic auth with credentials from this
+  file, in htpasswd format, bcrypt only
+- `-basic-auth-realm <realm>`: realm for HTTP basic auth (default: mylinks)
+- `-public-url <url>`: public-facing base URL, used for CSRF validation
+  (defaults to `http://<addr>:<port>`). Behind a reverse proxy this has to be
+  set to the externally visible URL or every state-changing request is
+  rejected. See `OPERATIONS.md`.
+- `-version`: print version information and exit
 
 Example:
 ```bash
