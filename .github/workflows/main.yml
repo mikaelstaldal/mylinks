@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 # One deployment at a time, and never cancel one midway
 concurrency:
@@ -21,7 +20,11 @@ jobs:
     # release step needs to move the `latest` tag and upload the binary.
     permissions:
       contents: write
-      id-token: write
+    # The longest job here: two installs, then build.sh running build, tests and
+    # lint, then the scan and the release. It also holds the workflow's
+    # concurrency group, which does not cancel in progress, so a job hung on the
+    # six hour default would queue every later push behind it for six hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -30,15 +33,26 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      # build.sh expects these on $PATH and never installs anything itself (see
-      # AGENTS.md).
+      # build.sh expects golangci-lint on $PATH and never installs anything
+      # itself (see AGENTS.md). govulncheck is not a build.sh tool, it is run by
+      # the next step, but its pin belongs with the others.
       - name: Install build tools
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
       # Silent on success; on failure it prints the failing step and exits non-zero
       - name: Build
         run: ./build.sh
+
+      # Ahead of the release step, so a build with a known vulnerability reachable
+      # from this code is never published. In the default source mode only
+      # reachable symbols fail the job; a vulnerability in a module we merely
+      # require is reported and ignored. This catches new advisories against
+      # unchanged code too, but only when something is pushed, which is why the
+      # weekly scan in govulncheck.yml exists alongside it.
+      - name: Check for known vulnerabilities
+        run: govulncheck ./...
 
       # Publishes the binary ./build.sh produced as a rolling release, so
       # https://github.com/<owner>/<repo>/releases/latest always serves the
@@ -64,3 +78,32 @@ jobs:
             --target "$SHA" \
             --title "Latest build from main" \
             --notes "Automated build of \`main\` at commit $SHA."
+
+  # The image is built but never pushed, so this needs no registry credentials.
+  #
+  # Its own job rather than a step in `build`, so it runs in parallel and a
+  # broken image does not hold up the binary release. Both are independent
+  # artifacts of the same commit; a failure here still turns the run red.
+  #
+  # Worth having because the Dockerfile pins a `golang:` base image while go.mod
+  # pins the toolchain, and the two can drift apart: the official images set
+  # GOTOOLCHAIN=local, so a base image older than the `go` directive fails the
+  # build. That drift shipped undetected once already.
+  docker:
+    runs-on: ubuntu-latest
+    # Same as the workflow default, stated so that a later change to that
+    # default does not silently widen what building an image can do.
+    permissions:
+      contents: read
+    # Generous because there is no layer cache: every run pulls golang and the
+    # sizeable headless-shell base image, then compiles from scratch. If it is
+    # still going after this long it is stuck, not slow.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # `docker` is preinstalled on the runner, so this pulls in no third-party
+      # action. The tag is throwaway and exists only because `docker build`
+      # wants somewhere to put the result.
+      - name: Build the Docker image
+        run: docker build -t mylinks:ci .

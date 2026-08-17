@@ -1,0 +1,50 @@
+# Scans the code against the Go vulnerability database on a schedule.
+#
+# The same scan runs in main.yml on every push, but that only ever fires when
+# something changes here. Advisories are published against code that has not
+# changed at all, and the last seven this project had to act on were all in the
+# standard library rather than in anything it wrote. This job is what notices
+# those during a quiet week.
+name: Vulnerability scan
+
+on:
+  schedule:
+    # Mondays, early. Off the hour because GitHub drops scheduled runs when too
+    # many land in the same minute.
+    #
+    # Note that GitHub disables scheduled workflows once a repository has seen
+    # no activity for 60 days, and says so only by email. On a quiet personal
+    # project that is a realistic way for this to stop running without anyone
+    # noticing, so if the scan has been silent for a long time, check that it is
+    # still enabled rather than reading silence as good news.
+    - cron: '17 6 * * 1'
+  # So the scan can be run on demand without waiting for Monday.
+  workflow_dispatch:
+
+# Reads the code, reports through the job's exit status, touches nothing.
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # Pinned, and kept in step with the pin in main.yml.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      # In the default source mode this fails the job only on a vulnerability
+      # reachable from this code. One in a module we merely require is reported
+      # and ignored, which is what keeps this from going permanently red over
+      # something like the unmaintained golang.org/x/crypto/openpgp that
+      # x/crypto drags in but nothing calls.
+      - name: Check for known vulnerabilities
+        run: govulncheck ./...

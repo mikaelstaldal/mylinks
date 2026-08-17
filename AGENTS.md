@@ -20,6 +20,22 @@ This document provides essential information for developers working on the MyLin
    ./mylinks
    ```
 
+### Upgrading Go
+The `go` directive in `go.mod` names an exact patch release rather than just a
+minor version, so that a toolchain carrying a security fix is a hard
+requirement rather than a suggestion. Two consequences:
+
+- The `golang:` base image in the `Dockerfile` has to be raised to match. The
+  official images set `GOTOOLCHAIN=local`, so a base image older than the `go`
+  directive cannot build this at all. Bumping one file without the other
+  breaks the image build, which is why CI builds the image on every push.
+- Anyone building with `GOTOOLCHAIN=local` needs that exact patch release
+  installed. Under the default `GOTOOLCHAIN=auto` the right toolchain is
+  downloaded automatically.
+
+CI needs no change on a bump: `actions/setup-go` reads the version from
+`go.mod`.
+
 ### Configuration Options
 The application accepts the following command-line flags:
 - `-port <number>`: Specify the HTTP server port (default: 8080)
