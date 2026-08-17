@@ -92,6 +92,8 @@ From the web interface, you can:
 │   ├── templates/          # HTML templates
 │   └── static/             # CSS, JavaScript files
 ├── Dockerfile              # Docker configuration
+├── .dockerignore           # Build context allow list, keep in step with the
+│                           #   Dockerfile's COPY lines
 ├── run.sh                  # Start script for Docker image
 ├── go.mod                  # Go module definition
 ├── apparmor-profile        # Apparmor profile template

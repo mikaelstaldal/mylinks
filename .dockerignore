@@ -1,0 +1,33 @@
+# An allow list rather than a deny list: exclude everything, then name the
+# handful of paths the Dockerfile actually COPYs. A deny list would have to be
+# extended every time something new turns up in the working directory, and the
+# cost of forgetting is silent — a live database or an editor's state directory
+# gets shipped to the daemon as part of the build context. Here the cost of
+# forgetting is a COPY that fails loudly on the next push, since CI builds the
+# image every time.
+#
+# The build context currently in the working directory but deliberately kept
+# out includes data/ (the running instance's SQLite database, its WAL and its
+# shared memory file), ignored/, the built ./mylinks binary, .git, and the
+# .idea/.claude/.junie editor and tool directories.
+#
+# Keep in step with the COPY lines in the Dockerfile.
+#
+# One trap when editing: these patterns are anchored to the context root and are
+# not recursive, unlike .gitignore. `!ui` re-includes the ui directory at the
+# root and everything under it, but it does not mean "any directory named ui at
+# any depth".
+*
+
+# Builder stage: dependencies, then the source. ui/ is not copied here, it is
+# replaced by empty-efs.go and empty/ so the binary reads its assets from disk
+# instead of embedding them.
+!go.mod
+!go.sum
+!cmd
+!empty-efs.go
+!empty
+
+# Final stage: the launcher and the real assets, served from disk at runtime.
+!run.sh
+!ui
