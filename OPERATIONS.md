@@ -85,6 +85,14 @@ chown mylinks:mylinks /etc/mylinks/htpasswd
 chmod 0600 /etc/mylinks/htpasswd
 ```
 
+mylinks reads this file once at startup and validates it strictly: every
+non-blank line has to be a `username:bcrypt-hash` pair, usernames have to be
+unique, and the file cannot be empty. Anything else aborts startup, naming the
+file and, where there is one, the offending line number, rather than leaving a
+login the operator believes in silently non-existent. A file written by
+`htpasswd -B` and nothing else satisfies this; note that `#` does not start a
+comment, since it is a legal first character of a username.
+
 > **Important:** HTTP Basic Auth must only be used over HTTPS. Never expose mylinks on a non-loopback interface without TLS. The reverse proxy (see below) provides TLS termination.
 
 ---

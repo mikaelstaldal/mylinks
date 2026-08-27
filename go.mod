@@ -6,7 +6,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
-	github.com/mikaelstaldal/go-server-common v1.8.1
+	github.com/mikaelstaldal/go-server-common v1.9.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/net v0.56.0
 	modernc.org/sqlite v1.53.0

@@ -105,14 +105,83 @@ func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 	assert.NoError(t, server.Wait(), "The server did not exit cleanly")
 }
 
+// bcryptSecret is the bcrypt hash of "secret", cost 10.
+const bcryptSecret = "$2a$10$g6h.kOLcUo4A7Yg9X1hPGeCJT523p2.6xNk9Yldg2iyqz2F7U2o9e"
+
+// TestRejectsMalformedHtpasswd verifies that a basic auth file the server
+// cannot fully parse aborts startup, naming the offending line, rather than
+// leaving the login the operator wrote silently non-existent.
+func TestRejectsMalformedHtpasswd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping test which runs the server")
+	}
+
+	passwordFile := filepath.Join(t.TempDir(), "htpasswd")
+	// A plain text password, which the strict loader refuses because it is
+	// not a bcrypt hash.
+	require.NoError(t, os.WriteFile(passwordFile, []byte("alice:secret\n"), 0600), "Failed to write the htpasswd file")
+
+	server := exec.Command(serverBinary, "-addr", "127.0.0.1", "-port", strconv.Itoa(freePort(t)),
+		"-data", filepath.Join(t.TempDir(), "data"), "-basic-auth-file", passwordFile)
+	output, err := server.CombinedOutput()
+
+	assert.Error(t, err, "The server started with an htpasswd file it could not parse")
+	assert.Contains(t, string(output), "line 1", "The failure does not name the offending line")
+}
+
+// TestUnauthorizedResponse verifies what an unauthenticated request gets: the
+// challenge, and a JSON body.
+func TestUnauthorizedResponse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping test which runs the server")
+	}
+
+	passwordFile := filepath.Join(t.TempDir(), "htpasswd")
+	require.NoError(t, os.WriteFile(passwordFile, []byte("alice:"+bcryptSecret+"\n"), 0600), "Failed to write the htpasswd file")
+
+	_, port, _ := startServerWithArgs(t, http.StatusUnauthorized, "-basic-auth-file", passwordFile, "-basic-auth-realm", "test-realm")
+
+	response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+	require.NoError(t, err, "Failed to make the request")
+	defer func() {
+		_ = response.Body.Close()
+	}()
+
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
+	assert.Equal(t, `Basic realm="test-realm"`, response.Header.Get("WWW-Authenticate"))
+	assert.Equal(t, "application/json", response.Header.Get("Content-Type"))
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err, "Failed to read the response body")
+	assert.JSONEq(t, `{"error":"unauthorized"}`, string(body))
+
+	// The credentials from the file are accepted.
+	request, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	require.NoError(t, err)
+	request.SetBasicAuth("alice", "secret")
+	authenticated, err := http.DefaultClient.Do(request)
+	require.NoError(t, err, "Failed to make the authenticated request")
+	_ = authenticated.Body.Close()
+	assert.Equal(t, http.StatusOK, authenticated.StatusCode, "The credentials from the htpasswd file were not accepted")
+}
+
 // startServer starts the server on a free port with an empty data directory,
 // and waits for it to serve requests.
 func startServer(t *testing.T) (*exec.Cmd, int, string) {
 	t.Helper()
 
+	return startServerWithArgs(t, http.StatusOK)
+}
+
+// startServerWithArgs is startServer with extra command line arguments, and
+// the status the root path answers with once the server is up — which is not
+// 200 when the arguments put authentication in front of it.
+func startServerWithArgs(t *testing.T, readyStatus int, extraArgs ...string) (*exec.Cmd, int, string) {
+	t.Helper()
+
 	dataDir := filepath.Join(t.TempDir(), "data")
 	port := freePort(t)
-	server := exec.Command(serverBinary, "-addr", "127.0.0.1", "-port", strconv.Itoa(port), "-data", dataDir)
+	args := append([]string{"-addr", "127.0.0.1", "-port", strconv.Itoa(port), "-data", dataDir}, extraArgs...)
+	server := exec.Command(serverBinary, args...)
 	server.Stdout = os.Stderr
 	server.Stderr = os.Stderr
 	require.NoError(t, server.Start(), "Failed to start the server")
@@ -129,7 +198,7 @@ func startServer(t *testing.T) (*exec.Cmd, int, string) {
 			return false
 		}
 		_ = response.Body.Close()
-		return response.StatusCode == http.StatusOK
+		return response.StatusCode == readyStatus
 	}, 30*time.Second, 50*time.Millisecond, "The server did not start serving")
 
 	return server, port, dataDir

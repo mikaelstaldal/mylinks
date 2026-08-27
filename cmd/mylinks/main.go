@@ -90,7 +90,11 @@ func run() (exitCode int) {
 
 	var authMiddleware func(http.Handler) http.Handler
 	if *basicAuthFile != "" {
-		htpasswd, err := auth.LoadHtpasswd(*basicAuthFile)
+		// Strict: this file is mylinks' own, written by the operator for
+		// mylinks alone, so a line it cannot parse is a mistake to report at
+		// startup rather than a login to silently drop. No username validator,
+		// mylinks puts the name nowhere but the credential check.
+		htpasswd, err := auth.LoadHtpasswdStrict(*basicAuthFile, nil)
 		if err != nil {
 			log.Fatalf("load htpasswd: %v", err)
 		}

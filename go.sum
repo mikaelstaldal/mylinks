@@ -26,8 +26,8 @@ github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 h1:QwWKgMY28TAXaDl+
 github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728/go.mod h1:1fEHWurg7pvf5SG6XNE5Q8UZmOwex51Mkx3SLhrW5B4=
 github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw4=
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
-github.com/mikaelstaldal/go-server-common v1.8.1 h1:wsGtslchWbWp98C1wBHhH3ylqnKv9iYkQtmvKxmiRiA=
-github.com/mikaelstaldal/go-server-common v1.8.1/go.mod h1:kNpYcVWnc/t9qwICN84fIj58UhOcPttnABVSRzfNs7k=
+github.com/mikaelstaldal/go-server-common v1.9.0 h1:lb4ggTQRVSIz0U4WXNLRQdrHa3FAvRDSKWSC+llDLco=
+github.com/mikaelstaldal/go-server-common v1.9.0/go.mod h1:sRlNLpYLgjXliNF4ufIVKejE+3FY5UQFBh/OunNIRt0=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde h1:x0TT0RDC7UhAVbbWWBzr41ElhJx5tXPWkIHA2HWPRuw=
