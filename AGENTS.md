@@ -58,6 +58,11 @@ by nothing but attention:
   the 8px between them — implements `../mysuite/spec/app-logo.md` and
   `../mysuite/spec/app-name-label.md`, contracts shared with MyCal, MyMail and
   MyNotes. See below.
+- `ui/static/favicon.svg`, `ui/static/favicon.ico` and the badge's inline `<svg>`
+  in `ui/templates/index.html` are three copies of one drawing: the same three
+  bars, and the same `#2563eb` behind them. Change one and change all three. The
+  `.ico` is a 16x16 raster, so it needs re-rendering (or recolouring) rather than
+  editing. Nothing warns you — a stale favicon just looks like the old app.
 
 ### The brand row answers to a spec in another repository
 `.brand`, `.brand-logo`, `.brand-name` and `.app-body`'s padding in
@@ -68,6 +73,13 @@ a `1.1rem` label in `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`.
 The mechanism is ours — those contracts bind the observable result, not how a
 project reaches it, which is why MyLinks keeps missing.css, htmx and hyperscript
 while matching the three apps' geometry.
+
+The favicon follows the same drawing. Its square is the badge's light-theme
+`#2563eb` and does not invert in dark mode, only the badge does — which is what
+MyCal and MyNotes do with theirs (`app-logo.md` §6.3). Favicon/badge parity is
+recorded there, not mandated, so this is a house rule rather than a contract
+value; it is worth keeping because the badge is the favicon's mark with the
+square taken off.
 
 **Nothing in this repository checks any of it**, and a spec in a sibling checkout
 is not something CI can see. Two edits in particular look local and are not:
