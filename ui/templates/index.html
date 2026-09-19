@@ -8,16 +8,71 @@
     <link rel="icon" href="./static/favicon.ico" sizes="any">
     <link href="./static/missing.1.1.3.min.css" rel="stylesheet"
           integrity="sha384-qZFYlw2B1UM516YRx4hSbZ/hoB1pKQObWWpcVXira7ZSpjf5NkrwpJuSpuGuu2WS">
-    <link href="./static/style.6.css" rel="stylesheet">
+    <link href="./static/style.7.css" rel="stylesheet">
     <script src="./static/htmx.2.0.6.min.js"
             integrity="sha384-Akqfrbj/HpNVo8k11SXBb6TlBWmXXlYQrCSqEWmyKJe+hDm3Z/B2WVG4smwBkRVm"></script>
     <script src="./static/hyperscript.0.9.14.min.js"
             integrity="sha384-NzchC8z9HmP/Ed8cheGl9XuSrFSkDNHPiDl+ujbHE0F0I7tWC4rUnwPXP+7IvVZv"></script>
     <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
 </head>
-<body class="margin">
+<body class="app-body">
     <div class="header-row">
-        <h1>MyLinks</h1>
+        <div class="brand">
+            <!-- The favicon mark (ui/static/favicon.svg) without its own background
+                 square: the badge supplies that, and the bars take their colour from
+                 the badge via currentColor. The viewBox crops the favicon's 108-unit
+                 canvas to 48 units around the 44-unit bars, so the mark spans 91.67%
+                 of the glyph box (../mysuite/spec/app-logo.md §3.3 wants at least 85%
+                 on the larger axis; the uncropped canvas would manage 40.7%). -->
+            <span class="brand-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="30 30 48 48"
+                     fill="currentColor" aria-hidden="true">
+                    <rect x="32" y="32" width="44" height="12"/>
+                    <rect x="32" y="48" width="44" height="12"/>
+                    <rect x="32" y="64" width="44" height="12"/>
+                </svg>
+            </span>
+            <h1 class="brand-name">MyLinks</h1>
+            <!-- After the mark and the label, where MyCal and MyMail put theirs.
+                 Refetches #links in place rather than reloading the page.
+
+                 The URL it refetches is location.href, not "." plus the search
+                 box: the search form pushes its query, so the URL is what the
+                 list currently shows, while #s can hold something typed and not
+                 yet submitted. Reload must repeat the request behind the list,
+                 not run a search nobody asked for.
+
+                 hx-get/hx-vals cannot express that -- hx-vals' js: prefix is
+                 evaluated with new Function(), which our CSP has no unsafe-eval
+                 for. Hyperscript parses its own language and needs none, which
+                 is why the rest of this page is written in it too.
+
+                 source: me makes htmx fire its events on this button and put
+                 htmx-request on it, which is what the error branch below and
+                 the spinner in the stylesheet both hang off. -->
+            <button type="button" class="brand-reload-btn" title="Reload" aria-label="Reload"
+                    _="
+                        on click
+                          call htmx.ajax('GET', window.location.href, {target:'#links', source:me})
+                        on htmx:afterRequest
+                          if the event's detail.failed then
+                            put the event's detail.xhr.responseText into #error-message
+                            remove @hidden from #error
+                          else
+                            put '' into #error-message
+                            add @hidden to #error
+                          end
+                      ">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                    <path d="M21 3v5h-5"/>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                    <path d="M8 16H3v5"/>
+                </svg>
+            </button>
+        </div>
         <p><a id="bookmarklet-link" href="#">Save to MyLinks</a><br>
             <small>Drag to bookmarks bar</small>
         </p>

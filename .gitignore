@@ -37,3 +37,6 @@ ignored/
 TODO.md
 DOING.md
 DONE.md
+
+# Scratch output from playwright-cli runs (snapshots, console and network logs).
+.playwright-cli/

@@ -1,0 +1,242 @@
+div.htmx-swapping {
+    opacity: 0;
+    transition: opacity 1s ease-out;
+}
+
+form {
+    display: contents;
+}
+
+/* Override weirdness in missing.css */
+input::placeholder {
+    text-align: start !important;
+}
+textarea::placeholder {
+    text-align: start !important;
+}
+
+.form-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(5ch, 1fr) minmax(10ch, 100fr) minmax(10ch, 1fr);
+}
+
+/* Responsive multi-column layout for links */
+.links-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* Two columns for medium screens (768px and up) */
+@media (min-width: 768px) {
+    .links-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Three columns for large screens (1200px and up) */
+@media (min-width: 1200px) {
+    .links-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+/* Four columns for extra large screens (1400px and up) */
+@media (min-width: 1400px) {
+    .links-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+.link-item {
+    margin: 0;
+    padding: 0.5rem;
+}
+
+.link-description {
+    white-space: pre-line;
+}
+
+.text-nowrap {
+  white-space: nowrap;
+}
+
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mt-auto {
+  margin-top: auto;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+/* Header row with bookmarklet */
+.header-row {
+  display: flex;
+  justify-content: space-between;
+  /* flex-start, not baseline. The brand block's baseline is the badge's bottom
+     edge (a flex item whose own content is an SVG contributes no baseline), so
+     baseline alignment would push the whole row down by whatever the bookmarklet
+     paragraph's first line needed — and the badge's distance from the top of the
+     window is a contract value (../mysuite/spec/app-logo.md §4). */
+  align-items: flex-start;
+  gap: var(--gap);
+}
+
+.header-row p {
+  text-align: right;
+  margin: 0;
+}
+
+/* --- App logo, app-name label and Reload -------------------------------------
+   ../mysuite/spec/app-logo.md and ../mysuite/spec/app-name-label.md. Those
+   contracts bind MyCal, MyMail and MyNotes; MyLinks keeps its own stack (Go
+   templates, htmx, hyperscript, missing.css) and reaches the same rendered
+   values through it. Only the observable result is shared, never the mechanism.
+
+   What is pinned, and where: the badge is 28x28 at radius 6 on #2563eb/#3b82f6
+   with white ink (§3.1, §7.1), the glyph renders 17x17 (§3.2), the mark spans at
+   least 85% of it (§3.3), the gap to the label is 8px (§3.4), the badge's
+   top-left corner sits at (16, 14) from the window (§4), and the label is
+   1.1rem of the shared system-ui stack (app-name-label.md §3.1, §3.2). */
+
+/* The (16, 14) of app-logo.md §4, authored rather than arrived at (§4.2): this
+   padding and .brand-logo's align-self are the whole of it, with nothing between
+   the window and the badge that any content can move. So this replaces
+   missing.css's `.margin` on <body> — var(--gap) is 22.4px and tracks --density,
+   which is exactly the kind of remainder §4.2 rules out. .bookmarklet-body keeps
+   `.margin`; it has no brand row. */
+.app-body {
+  margin: 0;
+  padding: 14px 16px 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px; /* app-logo.md §3.4, and the label's leading edge per §3.3 */
+  min-width: 0;
+}
+
+.brand-logo {
+  /* Out of .brand's centring, so the badge's y is body's 14px padding and
+     nothing else. Centring here would make it a remainder of (row height - 28)/2,
+     which is zero only while the badge is the tallest thing in the row: the
+     label's line box is 1.1rem x 1.5 and overtakes 28px at a ~16.97px root, one
+     click up Chrome's font-size menu. app-logo.md §4.2. */
+  align-self: flex-start;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+}
+
+/* missing.css's dark theme is opt-out by class rather than opt-in, so the badge
+   follows the same switch its surroundings do. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.-no-dark-theme) .brand-logo {
+    background: #3b82f6;
+  }
+}
+
+/* The mark carries no width or height of its own, so both are set here. */
+.brand-logo svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
+.brand-name {
+  margin: 0;
+  /* The stack is mandated as a computed value on the label
+     (app-name-label.md §3.1). The other three declare it on <body>; MyLinks
+     declares it here, because its body font is missing.css's --main-font and the
+     brief is to adapt this row, not to restyle the application. Editing this
+     line is a change to that contract and will not look like one. */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* rem, not px: 17.6px at the default root is only half the rule, the other
+     half is that it scales with the root (app-name-label.md §3.2). */
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  /* overflow zeroes the automatic minimum size, so a long name ellipsizes
+     instead of pushing Reload out of the row. */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A ghost button, the way MyCal and MyMail draw theirs: no outline of its own,
+   16px Lucide refresh-cw at 4px of padding. Not covered by either contract --
+   app-name-label.md §4.3 records these buttons as unguarded strangers in the
+   row -- but it sits in a row that is, so it must not change the badge's or the
+   label's geometry: flex-shrink keeps it off their space and its 24px box stays
+   under the badge's 28. */
+.brand-reload-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-fg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.brand-reload-btn:hover {
+  background: var(--interactive-bg);
+  color: var(--fg);
+}
+
+/* The swap is in place and often invisible -- a reload that finds nothing new
+   repaints identical markup -- so the button says the request happened. htmx
+   puts .htmx-request on the source element for the life of the request; the
+   htmx-config meta suppresses htmx's own indicator stylesheet, not the class. */
+.brand-reload-btn.htmx-request svg {
+  animation: brand-reload-spin 0.8s linear infinite;
+}
+
+@keyframes brand-reload-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-reload-btn.htmx-request svg {
+    animation: none;
+  }
+}
+
+/* Bookmarklet result popup */
+.bookmarklet-body {
+  text-align: center;
+}
+
+.bookmarklet-url {
+  word-break: break-all;
+  font-size: 0.9em;
+  color: #555;
+}
+
+.bookmarklet-countdown {
+  font-size: 0.85em;
+  color: #888;
+}

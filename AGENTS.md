@@ -37,7 +37,7 @@ CI needs no change on a bump: `actions/setup-go` reads the version from
 `go.mod`.
 
 ### Files that have to move together
-Beyond `go.mod` and the `Dockerfile` above, three couplings are held together
+Beyond `go.mod` and the `Dockerfile` above, five couplings are held together
 by nothing but attention:
 
 - Adding a `COPY` to the `Dockerfile` means adding the same path to
@@ -49,6 +49,34 @@ by nothing but attention:
   frozen until someone raises it by hand. `govulncheck` scans the Go code, not
   the image, and will never report anything about it, so nothing here notices
   when that base image accumulates vulnerabilities.
+- The number in `ui/static/style.N.css` is a cache buster, so changing the file
+  usually means renaming it — and the name appears in **both**
+  `ui/templates/index.html` and `ui/templates/bookmarklet-result.html`. Updating
+  only one leaves that page silently unstyled: the 404 is for a stylesheet, so
+  nothing fails, the page just renders bare.
+- The brand row at the top of `index.html` — the badge, the "MyLinks" label and
+  the 8px between them — implements `../mysuite/spec/app-logo.md` and
+  `../mysuite/spec/app-name-label.md`, contracts shared with MyCal, MyMail and
+  MyNotes. See below.
+
+### The brand row answers to a spec in another repository
+`.brand`, `.brand-logo`, `.brand-name` and `.app-body`'s padding in
+`ui/static/style.N.css` are not free choices. The rendered values they produce
+are fixed by `../mysuite/spec/app-logo.md` and `../mysuite/spec/app-name-label.md`:
+a 28×28 badge at (16, 14) from the window holding a 17×17 glyph, 8px of gap, and
+a `1.1rem` label in `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`.
+The mechanism is ours — those contracts bind the observable result, not how a
+project reaches it, which is why MyLinks keeps missing.css, htmx and hyperscript
+while matching the three apps' geometry.
+
+**Nothing in this repository checks any of it**, and a spec in a sibling checkout
+is not something CI can see. Two edits in particular look local and are not:
+changing `.app-body`'s `padding` moves the badge off (16, 14), and replacing
+`.brand-name`'s `font-size: 1.1rem` with the equivalent `17.6px` agrees at the
+default root font size and disagrees at every other one. The comments in the
+stylesheet name the section of the spec each value comes from; read the spec
+before changing a number, and change the spec with the owner before changing it
+here.
 
 ### Configuration Options
 The application accepts the following command-line flags:
