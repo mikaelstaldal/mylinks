@@ -131,6 +131,14 @@ func TestHandlers(t *testing.T) {
 		assert.Contains(t, string(body), time.Now().Format("2006-01-02 "), "Response doesn't contain the expected date")
 	})
 
+	t.Run("search FTS syntax as literal text", func(t *testing.T) {
+		for _, search := range []string{"example.com", "foo-bar", "C++", `a"b`, "(x", "a:b", "OR", "*"} {
+			req := httptest.NewRequest("GET", "/?s="+url.QueryEscape(search), nil)
+			response, _ := testRequest(t, handler, req)
+			assert.Equal(t, http.StatusOK, response.StatusCode, "Search %q returned wrong status code", search)
+		}
+	})
+
 	t.Run("get single link success", func(t *testing.T) {
 		req := httptest.NewRequest("GET", fmt.Sprintf("/%d", linkId), nil)
 		response, body := testRequest(t, handler, req)

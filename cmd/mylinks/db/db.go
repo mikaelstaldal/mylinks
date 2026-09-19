@@ -197,11 +197,20 @@ func (db *DB) GetAllLinks(ctx context.Context) ([]Link, error) {
 
 // Search returns links from the database matching a search string.
 func (db *DB) Search(ctx context.Context, s string) ([]Link, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	query := literalSearchQuery(s)
+	if query == "" {
+		return nil, nil
+	}
+
 	rows, err := db.QueryContext(ctx, `
 		SELECT l.id, l.url, l.title, l.description, l.added_at
 		FROM links_fts f INNER JOIN links l ON l.id=f.rowid
 		WHERE links_fts MATCH ? ORDER BY rank
-		`, s)
+		`, query)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +229,18 @@ func (db *DB) Search(ctx context.Context, s string) ([]Link, error) {
 	}
 
 	return links, nil
+}
+
+// literalSearchQuery turns each whitespace-separated search term into an FTS5
+// string literal. This preserves the existing AND-between-terms behavior while
+// preventing punctuation and operators in user input from being interpreted as
+// FTS5 query syntax.
+func literalSearchQuery(s string) string {
+	terms := strings.Fields(s)
+	for i, term := range terms {
+		terms[i] = `"` + strings.ReplaceAll(term, `"`, `""`) + `"`
+	}
+	return strings.Join(terms, " ")
 }
 
 // AddLink adds a new link to the database.

@@ -42,7 +42,7 @@ func TestDB(t *testing.T) {
 	url := "https://example.com"
 	title := "Example Website"
 	description := "This is an example website"
-	body := "<body><p>Some peculiar text in the body</p></body>"
+	body := "<body><p>Some peculiar foo-bar text from punctuation.test in the body</p></body>"
 	id, err := database.AddLink(t.Context(), url, title, description, []byte(body))
 	require.NoError(t, err, "Failed to add link")
 	assert.Positive(t, id, "Got %d, expected positive ID", id)
@@ -93,6 +93,30 @@ func TestDB(t *testing.T) {
 	assert.Equal(t, title, linksSearch[0].Title)
 	assert.Equal(t, description, linksSearch[0].Description)
 	assert.False(t, linksSearch[0].AddedAt.IsZero(), "Expected single non-zero AddedAt")
+
+	// Search input is plain text, not an FTS5 query. Syntax characters must not
+	// produce errors, and operators and prefixes must not change its meaning.
+	for _, search := range []string{"example.com", "foo-bar", "C++", `a"b`, "(x", "a:b", "OR", "*", "^x", "   "} {
+		t.Run("literal search "+search, func(t *testing.T) {
+			_, err := database.Search(t.Context(), search)
+			assert.NoError(t, err)
+		})
+	}
+
+	linksSearch, err = database.Search(t.Context(), "Exampl*")
+	require.NoError(t, err, "Failed to search for a literal asterisk")
+	assert.Empty(t, linksSearch, "A literal asterisk unexpectedly acted as a prefix operator")
+
+	linksSearch, err = database.Search(t.Context(), "Example OR nothingmatches")
+	require.NoError(t, err, "Failed to search for a literal operator")
+	assert.Empty(t, linksSearch, "OR unexpectedly acted as an FTS5 operator")
+
+	for _, search := range []string{"foo-bar", "punctuation.test"} {
+		linksSearch, err = database.Search(t.Context(), search)
+		require.NoError(t, err, "Failed to search for punctuation-bearing text")
+		assert.Len(t, linksSearch, 1, "Search %q did not preserve punctuation token boundaries", search)
+		assert.Equal(t, id, linksSearch[0].ID)
+	}
 
 	// Test successful retrieval
 	link, err := database.GetLink(t.Context(), id)
@@ -298,6 +322,9 @@ func TestContextCancellation(t *testing.T) {
 
 	_, err = database.Search(ctx, "body")
 	assert.ErrorIs(t, err, context.Canceled, "Search ignored the context")
+
+	_, err = database.Search(ctx, "   ")
+	assert.ErrorIs(t, err, context.Canceled, "Blank search ignored the context")
 
 	_, err = database.GetLink(ctx, 1)
 	assert.ErrorIs(t, err, context.Canceled, "GetLink ignored the context")
