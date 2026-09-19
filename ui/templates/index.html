@@ -34,35 +34,10 @@
             </span>
             <h1 class="brand-name">MyLinks</h1>
             <!-- After the mark and the label, where MyCal and MyMail put theirs.
-                 Refetches #links in place rather than reloading the page.
-
-                 The URL it refetches is location.href, not "." plus the search
-                 box: the search form pushes its query, so the URL is what the
-                 list currently shows, while #s can hold something typed and not
-                 yet submitted. Reload must repeat the request behind the list,
-                 not run a search nobody asked for.
-
-                 hx-get/hx-vals cannot express that -- hx-vals' js: prefix is
-                 evaluated with new Function(), which our CSP has no unsafe-eval
-                 for. Hyperscript parses its own language and needs none, which
-                 is why the rest of this page is written in it too.
-
-                 source: me makes htmx fire its events on this button and put
-                 htmx-request on it, which is what the error branch below and
-                 the spinner in the stylesheet both hang off. -->
+                 Refetches #links in place rather than reloading the page. -->
             <button type="button" class="brand-reload-btn" title="Reload" aria-label="Reload"
-                    _="
-                        on click
-                          call htmx.ajax('GET', window.location.href, {target:'#links', source:me})
-                        on htmx:afterRequest
-                          if the event's detail.failed then
-                            put the event's detail.xhr.responseText into #error-message
-                            remove @hidden from #error
-                          else
-                            put '' into #error-message
-                            add @hidden to #error
-                          end
-                      ">
+                    hx-get="."
+                    hx-target="#links">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                      stroke-linejoin="round" aria-hidden="true">
