@@ -6,6 +6,19 @@ provides a web interface for organizing your bookmarks.
 
 You can also save short notes which are not connected to any particular URL along with your bookmarks.
 
+## Interactive demo
+
+The [browser demo](https://mikaelstaldal.github.io/mylinks/) runs without a server. Its service worker handles the same link and note actions as the main UI, and IndexedDB keeps changes in this browser. It starts with a few sample links. Saving a URL checks its HTTP/HTTPS syntax and creates a sample title and description; it never fetches that URL or takes a screenshot. Search covers saved titles, descriptions, and URLs.
+
+To build a static copy:
+
+```bash
+go run ./cmd/mylinks -demo-bundle site
+python3 -m http.server 8000 --directory site
+```
+
+Open `http://localhost:8000/`. The output directory must be new or empty. The files can also be hosted under a path such as `/mylinks/` over HTTPS. The `Demo Pages` workflow publishes the bundle to GitHub Pages on pushes to `main`.
+
 ## Clients
 
 In addition to the built-in web interface, there is also 

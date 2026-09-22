@@ -44,6 +44,7 @@ func run() (exitCode int) {
 
 	// Define command line flags
 	version := flag.Bool("version", false, "print version information and exit")
+	demoBundle := flag.String("demo-bundle", "", "write a browser-only static demo to a new or empty directory")
 	port := flag.Int("port", 8080, "port to listen on")
 	addr := flag.String("addr", "127.0.0.1", "address to listen on")
 	dataDir := flag.String("data", "data", "directory to store data in")
@@ -54,6 +55,14 @@ func run() (exitCode int) {
 
 	if *version {
 		printVersion()
+		return 0
+	}
+
+	if *demoBundle != "" {
+		if err := writeDemoBundle(*demoBundle); err != nil {
+			log.Printf("demo bundle: %v", err)
+			return 1
+		}
 		return 0
 	}
 
