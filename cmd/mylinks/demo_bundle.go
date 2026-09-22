@@ -26,7 +26,9 @@ func writeDemoBundle(out string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func(path string) {
+		_ = os.RemoveAll(path)
+	}(tmp)
 	database, err := db.InitDB(filepath.Join(tmp, databaseName))
 	if err != nil {
 		return err
