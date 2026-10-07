@@ -89,15 +89,24 @@ This has only been tested on Ubuntu and Debian Linux.
 | `-data` | `data` | Directory to store data in |
 | `-basic-auth-file` | none | Enable HTTP basic auth with credentials from this file, in htpasswd format, bcrypt only |
 | `-basic-auth-realm` | `mylinks` | Realm for HTTP basic auth |
-| `-public-url` | `http://<addr>:<port>` | Public-facing base URL, for CSRF validation |
+| `-public-url` | Local listener authorities | Public-facing base URL for Host and CSRF validation; required with a wildcard bind address |
 | `-version` | | Print version information and exit |
 
-`-public-url` matters as soon as the application is reached under any address
-other than the one it listens on, which is the case behind a reverse proxy.
-CSRF validation rejects state-changing requests whose `Origin` or `Referer`
-does not match it, so adding, editing and deleting fail until it is set to the
-externally visible URL, scheme and host included. See `OPERATIONS.md` for a
-worked reverse proxy setup.
+The server validates the request Host on every route and method, rejecting foreign
+authorities with HTTP 421 before authentication. It allows `localhost`,
+`127.0.0.1`, `[::1]`, and a concrete bind address at the configured listener port,
+plus the authority from `-public-url`. Wildcard binds (`0.0.0.0`, `::`, or an
+empty address) require an explicit public URL. Custom ports must match. When remapping a Docker host port (for example,
+`-p 9090:8080`), set `-public-url http://localhost:9090` for browser access
+through that authority.
+
+Behind a reverse proxy, set `-public-url https://links.example.com` (including
+the public port if nonstandard). Paths such as `/mylinks/` are ignored for Host
+and CSRF validation; this flag does not mount the application under that path.
+The proxy must preserve the public Host or send an allowed local authority;
+forwarding headers do not extend the allowlist. State-changing browser requests
+must have an Origin or Referer matching the public origin or a local HTTP
+origin. Native clients without either header remain supported.
 
 ## Web Interface
 

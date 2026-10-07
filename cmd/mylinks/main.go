@@ -5,16 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/mikaelstaldal/go-server-common/auth"
 	"github.com/mikaelstaldal/go-server-common/csrf"
+	"github.com/mikaelstaldal/go-server-common/hostguard"
 	"github.com/mikaelstaldal/mylinks/cmd/mylinks/db"
 	"github.com/mikaelstaldal/mylinks/cmd/mylinks/web"
 )
@@ -50,7 +53,7 @@ func run() (exitCode int) {
 	dataDir := flag.String("data", "data", "directory to store data in")
 	basicAuthFile := flag.String("basic-auth-file", "", "enable HTTP basic auth with username and password from given file in htpasswd format (bcrypt only)")
 	basicAuthRealm := flag.String("basic-auth-realm", "mylinks", "realm for HTTP basic auth")
-	publicURL := flag.String("public-url", "", "Public-facing base URL for CSRF validation, e.g. https://example.com (defaults to http://<addr>:<port>)")
+	publicURL := flag.String("public-url", "", "Public-facing base URL for Host and CSRF validation, e.g. https://example.com (required with a wildcard bind address)")
 	flag.Parse()
 
 	if *version {
@@ -111,7 +114,7 @@ func run() (exitCode int) {
 		log.Printf("basic authentication enabled")
 	}
 
-	serverOrigin, err := csrf.ResolveServerOrigin(*publicURL, *addr, *port)
+	hostPolicy, err := hostguard.New(*publicURL, *addr, *port)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -131,14 +134,16 @@ func run() (exitCode int) {
 
 	// Initialize handlers
 	mux := web.NewHandlers(executableDir, database, filepath.Join(*dataDir, screenshotsDir)).Routes()
-	var root = csrf.Middleware(serverOrigin)(mux)
+	var root = csrf.MiddlewareOrigins(hostPolicy.Origins()...)(mux)
 
 	if authMiddleware != nil {
 		root = authMiddleware(root)
 	}
 
+	root = hostPolicy.Middleware(root)
+
 	// Start server
-	serverAddr := fmt.Sprintf("%s:%d", *addr, *port)
+	serverAddr := net.JoinHostPort(*addr, strconv.Itoa(*port))
 	log.Printf("Starting server on %s", serverAddr)
 	server := http.Server{
 		Addr:         serverAddr,

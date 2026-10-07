@@ -28,6 +28,8 @@ github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
 github.com/mikaelstaldal/go-server-common v1.10.0 h1:HhM1pLby/jtH7lfdWwr4W9wO0mi60TX5n1wP8O2RgI0=
 github.com/mikaelstaldal/go-server-common v1.10.0/go.mod h1:sRlNLpYLgjXliNF4ufIVKejE+3FY5UQFBh/OunNIRt0=
+github.com/mikaelstaldal/go-server-common v1.12.0 h1:CBK7Oo8q5nZRklWk8rHQUOpJCKWL8kKL1fgoy5gpYZ8=
+github.com/mikaelstaldal/go-server-common v1.12.0/go.mod h1:sRlNLpYLgjXliNF4ufIVKejE+3FY5UQFBh/OunNIRt0=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde h1:x0TT0RDC7UhAVbbWWBzr41ElhJx5tXPWkIHA2HWPRuw=

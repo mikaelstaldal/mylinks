@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -215,4 +217,78 @@ func freePort(t *testing.T) int {
 	require.NoError(t, listener.Close(), "Failed to release the port")
 
 	return port
+}
+
+// Exercise the actual server stack, including Host validation before auth and
+// CSRF, at an ephemeral listener port.
+func TestHostValidation(t *testing.T) {
+	passwordFile := filepath.Join(t.TempDir(), "htpasswd")
+	require.NoError(t, os.WriteFile(passwordFile, []byte("alice:"+bcryptSecret+"\n"), 0600))
+	for _, authenticated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("auth=%t", authenticated), func(t *testing.T) {
+			args := []string{"-public-url", "https://links.example.com:9443/mylinks/"}
+			readyStatus := http.StatusOK
+			if authenticated {
+				args = append(args, "-basic-auth-file", passwordFile)
+				readyStatus = http.StatusUnauthorized
+			}
+			_, port, _ := startServerWithArgs(t, readyStatus, args...)
+			local := fmt.Sprintf("127.0.0.1:%d", port)
+			for _, tc := range []struct {
+				host, origin string
+				status       int
+			}{
+				{"evil.example", "https://links.example.com:9443", http.StatusMisdirectedRequest},
+				{"links.example.com", "https://links.example.com:9443", http.StatusMisdirectedRequest},
+				{"links.example.com:9443", "https://links.example.com:9443", http.StatusOK},
+				{local, "http://" + local, http.StatusOK},
+				{fmt.Sprintf("localhost:%d", port), fmt.Sprintf("http://localhost:%d", port), http.StatusOK},
+				{fmt.Sprintf("[::1]:%d", port), fmt.Sprintf("http://[::1]:%d", port), http.StatusOK},
+				{local, "https://evil.example", http.StatusForbidden},
+			} {
+				for _, method := range []string{http.MethodGet, http.MethodPost} {
+					t.Run(method+"/"+tc.host+"/"+tc.origin, func(t *testing.T) {
+						req, err := http.NewRequest(method, "http://"+local+"/", strings.NewReader("note-title=Test&note-text="+url.QueryEscape(tc.host)))
+						require.NoError(t, err)
+						req.Host = tc.host
+						req.Header.Set("Origin", tc.origin)
+						req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+						// Forwarded headers cannot rescue a foreign Host.
+						req.Header.Set("X-Forwarded-Host", "links.example.com:9443")
+						if authenticated && tc.status != http.StatusMisdirectedRequest {
+							req.SetBasicAuth("alice", "secret")
+						}
+						resp, err := http.DefaultClient.Do(req)
+						require.NoError(t, err)
+						defer resp.Body.Close()
+						want := tc.status
+						if method == http.MethodGet && want == http.StatusForbidden {
+							want = http.StatusOK
+						}
+						if method == http.MethodPost && want == http.StatusOK {
+							want = http.StatusCreated
+						}
+						assert.Equal(t, want, resp.StatusCode)
+						if want == http.StatusMisdirectedRequest {
+							assert.Empty(t, resp.Header.Get("WWW-Authenticate"))
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestInvalidHostConfiguration(t *testing.T) {
+	for _, args := range [][]string{
+		{"-addr", "0.0.0.0"},
+		{"-addr", "::"},
+		{"-public-url", "https://user:password@links.example.com"},
+		{"-public-url", "ftp://links.example.com"},
+	} {
+		server := exec.Command(serverBinary, append([]string{"-data", t.TempDir()}, args...)...)
+		output, err := server.CombinedOutput()
+		assert.Error(t, err)
+		assert.Contains(t, string(output), "public URL")
+	}
 }

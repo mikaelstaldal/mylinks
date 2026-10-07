@@ -98,10 +98,11 @@ The application accepts the following command-line flags:
 - `-basic-auth-file <file>`: enable HTTP basic auth with credentials from this
   file, in htpasswd format, bcrypt only
 - `-basic-auth-realm <realm>`: realm for HTTP basic auth (default: mylinks)
-- `-public-url <url>`: public-facing base URL, used for CSRF validation
-  (defaults to `http://<addr>:<port>`). Behind a reverse proxy this has to be
-  set to the externally visible URL or every state-changing request is
-  rejected. See `OPERATIONS.md`.
+- `-public-url <url>`: public-facing base URL, used for Host and CSRF validation.
+  Required with a wildcard bind address; local aliases are allowed at the listener
+  port. Behind a reverse proxy, set this to the externally visible URL and
+  preserve its Host (or use an allowed local authority). URL paths are ignored
+  for validation. See `OPERATIONS.md`.
 - `-version`: print version information and exit
 
 Example:

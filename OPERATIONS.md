@@ -155,7 +155,9 @@ journalctl -u mylinks -f
 
 mylinks does not terminate TLS itself. Place it behind a reverse proxy.
 
-Start mylinks with `-public-url https://links.example.com`. The CSRF middleware rejects state-changing requests (POST/PATCH/DELETE) whose `Origin` or `Referer` does not match the configured public URL, so this must match the externally visible URL exactly (scheme and host).
+Start mylinks with `-public-url https://links.example.com`. Host validation runs before authentication on all routes and methods; foreign authorities receive HTTP 421. Preserve the public Host at the proxy, or send a local authority (`localhost`, `127.0.0.1`, `[::1]`, or the concrete bind address) with the listener port. Forwarded headers are not trusted for Host validation. Wildcard binds require an explicit public URL.
+
+CSRF validation accepts the public origin and the local HTTP origins above. Set the externally visible scheme, host, and port correctly, including custom ports. A public URL path is ignored for these checks and does not configure a path prefix. Browser writes with a foreign Origin or Referer receive HTTP 403; native requests without either header remain supported.
 
 One requirement regardless of which reverse proxy you use:
 
@@ -190,7 +192,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
 
-        proxy_set_header Host              $host;
+        proxy_set_header Host              $http_host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
