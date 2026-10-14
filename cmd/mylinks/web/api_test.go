@@ -32,7 +32,8 @@ func apiTestHandlers(t *testing.T) *Handlers {
 
 // Keep the pre-generation router here as a compatibility oracle for wire
 // details that OpenAPI cannot express (notably exact Accept matching).
-func originalAPIRoutes(h *Handlers) http.Handler {
+func originalAPIRoutes(handlers *Handlers) http.Handler {
+	h := legacyHandlers{handlers}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", h.ListLinks)
 	mux.HandleFunc("POST /{$}", h.AddItem)
@@ -48,6 +49,7 @@ func TestGeneratedAPICompatibility(t *testing.T) {
 		name, method, target, body, contentType string
 		accept                                  []string
 		hx                                      string
+		authorization                           string
 	}{
 		{name: "list JSON", method: "GET", target: "/", accept: []string{"application/json"}},
 		{name: "case insensitive JSON", method: "GET", target: "/", accept: []string{"APPLICATION/JSON"}},
@@ -57,6 +59,13 @@ func TestGeneratedAPICompatibility(t *testing.T) {
 		{name: "Accept whitespace is HTML", method: "GET", target: "/", accept: []string{" application/json "}},
 		{name: "list page", method: "GET", target: "/"},
 		{name: "list fragment", method: "GET", target: "/", hx: "true"},
+		{name: "malformed Authorization", method: "GET", target: "/1", authorization: "Basic not-base64"},
+		{name: "repeated search", method: "GET", target: "/?s=Original&s=Missing", accept: []string{"application/json"}},
+		{name: "repeated edit", method: "GET", target: "/1?edit=1&edit=0"},
+		{name: "HX whitespace", method: "GET", target: "/", hx: " true "},
+		{name: "HX mixed values", method: "GET", target: "/", hx: "true,false"},
+		{name: "negative ID", method: "GET", target: "/-1"},
+		{name: "signed ID", method: "GET", target: "/+1"},
 		{name: "search", method: "GET", target: "/?s=Original", accept: []string{"application/json"}},
 		{name: "malformed query", method: "GET", target: "/?s=%zz", accept: []string{"application/json"}},
 		{name: "item JSON", method: "GET", target: "/1", accept: []string{"application/json"}},
@@ -105,6 +114,7 @@ func TestGeneratedAPICompatibility(t *testing.T) {
 					r.Header.Add("Accept", accept)
 				}
 				r.Header.Set("HX-Request", tt.hx)
+				r.Header.Set("Authorization", tt.authorization)
 				w := httptest.NewRecorder()
 				router.ServeHTTP(w, r)
 				responses = append(responses, w)
@@ -233,4 +243,51 @@ func (r *apiCountingReader) Read(p []byte) (int, error) {
 	n, err := r.Reader.Read(p)
 	r.bytesRead += n
 	return n, err
+}
+
+func TestGeneratedAPIJSONEncoding(t *testing.T) {
+	h := apiTestHandlers(t)
+	_, err := h.database.ExecContext(t.Context(), "UPDATE links SET title = ?, description = ?, added_at = ? WHERE id = 1", "<Title> & \"quoted\"", "<script>\u2028\u2029", "2026-01-01T00:00:00.123456789Z")
+	require.NoError(t, err)
+	for _, path := range []string{"/", "/1", "/?s=NotFound"} {
+		t.Run(path, func(t *testing.T) {
+			var responses []*httptest.ResponseRecorder
+			for _, router := range []http.Handler{originalAPIRoutes(h), h.Routes()} {
+				r := httptest.NewRequest("GET", path, nil)
+				r.Header.Set("Accept", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, r)
+				responses = append(responses, w)
+			}
+			require.Equal(t, http.StatusOK, responses[0].Code)
+			assert.Equal(t, responses[0].Code, responses[1].Code)
+			assert.Equal(t, responses[0].Header(), responses[1].Header())
+			assert.Equal(t, responses[0].Body.String(), responses[1].Body.String())
+			if path == "/1" {
+				assert.Contains(t, responses[1].Body.String(), ".123456789Z")
+				assert.Contains(t, responses[1].Body.String(), `\u003c`)
+			}
+		})
+	}
+}
+
+func TestGeneratedAPIJSONMarshalFailure(t *testing.T) {
+	h := apiTestHandlers(t)
+	// time.Parse accepts this offset; time.Time.MarshalJSON rejects it.
+	_, err := h.database.ExecContext(t.Context(), "UPDATE links SET added_at = ? WHERE id = 1", "2026-01-01T00:00:00+24:00")
+	require.NoError(t, err)
+	link, err := h.database.GetLink(t.Context(), 1)
+	require.NoError(t, err)
+	_, err = link.AddedAt.MarshalJSON()
+	require.Error(t, err)
+	for _, path := range []string{"/", "/1"} {
+		for _, router := range []http.Handler{originalAPIRoutes(h), h.Routes()} {
+			r := httptest.NewRequest("GET", path, nil)
+			r.Header.Set("Accept", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, r)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, "Internal Server Error\n", w.Body.String())
+		}
+	}
 }

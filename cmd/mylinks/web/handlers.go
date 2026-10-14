@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -27,6 +26,7 @@ import (
 	"github.com/ledongthuc/pdf"
 	"github.com/mikaelstaldal/go-server-common/httputil"
 	"github.com/mikaelstaldal/mylinks/cmd/mylinks/db"
+	"github.com/mikaelstaldal/mylinks/internal/api"
 	"github.com/mikaelstaldal/mylinks/ui"
 	"golang.org/x/net/html"
 )
@@ -148,12 +148,11 @@ func newHandlers(executableDir string, database *db.DB, screenshotsDir string, f
 // Routes sets up and returns the HTTP routing handler for the application.
 // It configures routes for static files, screenshots (if enabled), and API endpoints.
 // Static files are served either from the local filesystem or embedded files.
-// If authentication is configured (via usernameBcryptHash and passwordBcryptHash),
-// all routes will be protected with HTTP Basic Authentication.
+// Authentication is applied by main when configured.
 // Returns an http.Handler that includes all configured routes with common headers.
 func (h *Handlers) Routes() http.Handler {
 	mux := http.NewServeMux()
-	apiServer, err := newAPIServer()
+	apiServer, err := api.NewServer(h, h, api.WithErrorHandler(handleAPIError))
 	if err != nil {
 		log.Fatalf("Unable to initialize API server: %v", err)
 	}
@@ -173,13 +172,13 @@ func (h *Handlers) Routes() http.Handler {
 		mux.Handle("GET /screenshots/", http.StripPrefix("/screenshots", http.FileServer(http.Dir(h.screenshotsDir))))
 	}
 
-	mux.HandleFunc("GET /bookmarklet", apiRoute(apiServer, h.BookmarkletSave))
-
-	mux.HandleFunc("GET /{$}", apiRoute(apiServer, h.ListLinks))
-	mux.HandleFunc("POST /{$}", apiRoute(apiServer, h.AddItem))
-	mux.HandleFunc("GET /{id}", apiRoute(apiServer, h.GetLink))
-	mux.HandleFunc("PATCH /{id}", apiRoute(apiServer, h.EditLink))
-	mux.HandleFunc("DELETE /{id}", apiRoute(apiServer, h.DeleteLink))
+	serveAPI := prepareAPIRequest(apiServer)
+	mux.HandleFunc("GET /bookmarklet", serveAPI)
+	mux.HandleFunc("GET /{$}", serveAPI)
+	mux.HandleFunc("POST /{$}", serveAPI)
+	mux.HandleFunc("GET /{id}", serveAPI)
+	mux.HandleFunc("PATCH /{id}", serveAPI)
+	mux.HandleFunc("DELETE /{id}", serveAPI)
 
 	return commonHeaders(mux)
 }
@@ -196,56 +195,6 @@ type Link struct {
 type LinkView struct {
 	db.Link
 	Edit bool
-}
-
-// ListLinks handles the request to list all links.
-func (h *Handlers) ListLinks(w http.ResponseWriter, r *http.Request) {
-	h.listLinks(w, r, http.StatusOK)
-}
-
-// AddItem handles the request to add a new item.
-func (h *Handlers) AddItem(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		sendError(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	urlString := r.PostForm.Get("url")
-	if urlString != "" {
-		// Parse and validate URL
-		parsedURL, err := url.Parse(urlString)
-		if err != nil || h.validateURL(parsedURL) != nil {
-			sendError(w, "Invalid URL. Must be a valid HTTP/HTTPS URL", http.StatusBadRequest)
-			return
-		}
-		h.addLink(w, r, parsedURL)
-	} else {
-		if err := r.ParseForm(); err != nil {
-			sendError(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		title := strings.TrimSpace(r.PostForm.Get("note-title"))
-		if title == "" {
-			sendError(w, "Note title is required", http.StatusBadRequest)
-			return
-		}
-		if len(title) > maxTitleLength {
-			sendError(w, fmt.Sprintf("Note title is too long, max %d characters allowed", maxTitleLength), http.StatusBadRequest)
-			return
-		}
-
-		note := strings.TrimSpace(r.PostForm.Get("note-text"))
-		if note == "" {
-			sendError(w, "Note text is required", http.StatusBadRequest)
-			return
-		}
-		if len(note) > maxDescriptionLength {
-			sendError(w, fmt.Sprintf("Note text is too long, max %d characters allowed", maxDescriptionLength), http.StatusBadRequest)
-			return
-		}
-		h.addNote(w, r, title, note)
-	}
 }
 
 // saveLink fetches the URL, extracts metadata, and saves it to the database.
@@ -344,76 +293,6 @@ func (h *Handlers) refetchBody(ctx context.Context, id int64, description string
 	}
 
 	return body
-}
-
-// addLink handles the request to add a new link.
-func (h *Handlers) addLink(w http.ResponseWriter, r *http.Request, urlToSave *url.URL) {
-	id, errMsg, status := h.saveLink(r.Context(), urlToSave)
-	if errMsg != "" {
-		sendError(w, errMsg, status)
-		return
-	}
-
-	w.Header().Set("Location", fmt.Sprintf("/%v", id))
-	h.listLinks(w, r, http.StatusCreated)
-}
-
-// addNote handles the request to add a new free-form note.
-func (h *Handlers) addNote(w http.ResponseWriter, r *http.Request, title string, note string) {
-	description := note
-
-	// Generate a pseudo URL to satisfy the NOT NULL UNIQUE constraint and keep entries distinguishable.
-	urlToSave := fmt.Sprintf("note:%d", time.Now().UnixMilli())
-
-	writeCtx, cancel := writeContext(r.Context())
-	defer cancel()
-	id, err := h.database.AddLink(writeCtx, urlToSave, title, description, []byte(note))
-	if err != nil {
-		sendError(w, fmt.Sprintf("Failed to add note: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Location", fmt.Sprintf("/%v", id))
-	h.listLinks(w, r, http.StatusCreated)
-}
-
-// BookmarkletSave handles GET /bookmarklet?url=... to save a link from the bookmarklet popup.
-func (h *Handlers) BookmarkletSave(w http.ResponseWriter, r *http.Request) {
-	urlString := r.URL.Query().Get("url")
-	if urlString == "" {
-		h.render(w, "bookmarklet-result.html", struct {
-			Success bool
-			URL     string
-			Error   string
-		}{Success: false, Error: "No URL provided"}, http.StatusBadRequest)
-		return
-	}
-
-	parsedURL, err := url.Parse(urlString)
-	if err != nil || h.validateURL(parsedURL) != nil {
-		h.render(w, "bookmarklet-result.html", struct {
-			Success bool
-			URL     string
-			Error   string
-		}{Success: false, Error: "Invalid URL format. Must be a valid HTTP/HTTPS URL"}, http.StatusBadRequest)
-		return
-	}
-
-	_, errMsg, status := h.saveLink(r.Context(), parsedURL)
-	if errMsg != "" {
-		h.render(w, "bookmarklet-result.html", struct {
-			Success bool
-			URL     string
-			Error   string
-		}{Success: false, Error: errMsg}, status)
-		return
-	}
-
-	h.render(w, "bookmarklet-result.html", struct {
-		Success bool
-		URL     string
-		Error   string
-	}{Success: true, URL: urlString}, http.StatusCreated)
 }
 
 func (h *Handlers) validateURL(u *url.URL) error {
@@ -717,162 +596,6 @@ func (h *Handlers) saveScreenshot(urlString string, screenshot []byte) error {
 	return nil
 }
 
-// GetLink gets a single link.
-func (h *Handlers) GetLink(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		sendError(w, fmt.Sprintf("Invalid ID: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	h.getLink(w, r, id)
-}
-
-// EditLink handles the request to edit a link.
-func (h *Handlers) EditLink(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		sendError(w, fmt.Sprintf("Invalid ID: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		sendError(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	title := r.PostForm.Get("title")
-	if title == "" {
-		sendError(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	if len(title) > maxTitleLength {
-		sendError(w, fmt.Sprintf("title is too long, max %d characters allowed", maxTitleLength), http.StatusBadRequest)
-		return
-	}
-
-	description := r.PostForm.Get("description")
-	if len(description) > maxDescriptionLength {
-		sendError(w, fmt.Sprintf("description is too long, max %d characters allowed", maxDescriptionLength), http.StatusBadRequest)
-		return
-	}
-
-	body := h.refetchBody(r.Context(), id, description)
-
-	writeCtx, cancel := writeContext(r.Context())
-	defer cancel()
-	err = h.database.UpdateLink(writeCtx, id, title, description, body)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		} else {
-			sendError(w, fmt.Sprintf("Failed edit link: %v\n", err), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	h.getLink(w, r, id)
-}
-
-func (h *Handlers) getLink(w http.ResponseWriter, r *http.Request, id int64) {
-	dbLink, err := h.database.GetLink(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		} else {
-			sendError(w, fmt.Sprintf("Failed to get link: %v\n", err), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	if wantJson(r) {
-		h.renderJson(w, dbLink, http.StatusOK)
-	} else {
-		view := LinkView{
-			Link: dbLink,
-			Edit: r.URL.Query().Get("edit") == "1",
-		}
-		if h.browserContext != nil {
-			h.render(w, "link-with-screenshot", view, http.StatusOK)
-		} else {
-			h.render(w, "link-without-screenshot", view, http.StatusOK)
-		}
-	}
-}
-
-// DeleteLink handles the request to delete a link.
-func (h *Handlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		sendError(w, fmt.Sprintf("Invalid ID: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	writeCtx, cancel := writeContext(r.Context())
-	defer cancel()
-	err = h.database.DeleteLink(writeCtx, id)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			sendError(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		} else {
-			sendError(w, fmt.Sprintf("Failed delete link: %v\n", err), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	screenshotPath := filepath.Join(h.screenshotsDir, fmt.Sprintf("%d.png", id))
-	if err := os.Remove(screenshotPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete screenshot: %v\n", err)
-	}
-}
-
-func (h *Handlers) listLinks(w http.ResponseWriter, r *http.Request, status int) {
-	search := r.URL.Query().Get("s")
-	var dbLinks []db.Link
-	var err error
-	if search != "" {
-		dbLinks, err = h.database.Search(r.Context(), search)
-		if err != nil {
-			sendError(w, fmt.Sprintf("Failed to search: %v\n", err), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		dbLinks, err = h.database.GetAllLinks(r.Context())
-		if err != nil {
-			sendError(w, fmt.Sprintf("Failed to get links: %v\n", err), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if wantJson(r) {
-		h.renderJson(w, dbLinks, status)
-	} else {
-		links := make([]LinkView, 0, len(dbLinks))
-		for _, link := range dbLinks {
-			links = append(links, LinkView{Link: link})
-		}
-		data := struct {
-			Search          string
-			Links           []LinkView
-			ShowScreenshots bool
-		}{
-			Search:          search,
-			Links:           links,
-			ShowScreenshots: h.browserContext != nil,
-		}
-		var templateName string
-		if r.Header.Get("HX-Request") == "true" {
-			templateName = "links"
-		} else {
-			templateName = "index.html"
-		}
-		h.render(w, templateName, data, status)
-	}
-}
-
 func wantJson(r *http.Request) bool {
 	wantJson := false
 	for _, accept := range r.Header.Values("Accept") {
@@ -881,29 +604,6 @@ func wantJson(r *http.Request) bool {
 		}
 	}
 	return wantJson
-}
-
-func (h *Handlers) render(w http.ResponseWriter, name string, data any, status int) {
-	buf := new(bytes.Buffer)
-	err := h.templates.ExecuteTemplate(buf, name, data)
-	if err != nil {
-		sendError(w, fmt.Sprintf("Failed to render %s: %v\n", name, err), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(status)
-	_, _ = buf.WriteTo(w)
-}
-
-func (h *Handlers) renderJson(w http.ResponseWriter, data any, status int) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		sendError(w, fmt.Sprintf("Failed to marshal JSON: %v\n", err), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(jsonData)
 }
 
 func sendError(w http.ResponseWriter, errorMessage string, status int) {
@@ -925,4 +625,323 @@ func screenshotFilename(urlString string) string {
 
 func isNote(urlString string) bool {
 	return strings.HasPrefix(urlString, "note:")
+}
+
+var _ api.Handler = (*Handlers)(nil)
+var _ api.SecurityHandler = (*Handlers)(nil)
+
+// ListLinks implements the generated list operation.
+func (h *Handlers) ListLinks(ctx context.Context, params api.ListLinksParams) (api.ListLinksRes, error) {
+	links, err := h.listLinks(ctx, params.S.Or(""))
+	if err != nil {
+		return nil, err
+	}
+	if wantsJSON(ctx) {
+		response, err := linkResponses(links)
+		if err != nil {
+			return nil, err
+		}
+		return &response, nil
+	}
+	body, err := h.listHTML(links, params.S.Or(""), params.HXRequest.Or("") == "true")
+	if err != nil {
+		return nil, err
+	}
+	return &api.ListTextHTML{Data: body}, nil
+}
+
+// AddItem implements the generated form operation.
+func (h *Handlers) AddItem(ctx context.Context, req api.OptAddItemReq, params api.AddItemParams) (api.AddItemRes, error) {
+	form := req.Value
+	var id int64
+	if urlString := form.URL.Or(""); urlString != "" {
+		parsedURL, err := url.Parse(urlString)
+		if err != nil || h.validateURL(parsedURL) != nil {
+			return nil, requestError(http.StatusBadRequest, "Invalid URL. Must be a valid HTTP/HTTPS URL")
+		}
+		var message string
+		var status int
+		id, message, status = h.saveLink(ctx, parsedURL)
+		if message != "" {
+			return nil, requestError(status, message)
+		}
+	} else {
+		title := strings.TrimSpace(form.NoteMinusTitle.Or(""))
+		if title == "" {
+			return nil, requestError(http.StatusBadRequest, "Note title is required")
+		}
+		if len(title) > maxTitleLength {
+			return nil, requestError(http.StatusBadRequest, fmt.Sprintf("Note title is too long, max %d characters allowed", maxTitleLength))
+		}
+		note := strings.TrimSpace(form.NoteMinusText.Or(""))
+		if note == "" {
+			return nil, requestError(http.StatusBadRequest, "Note text is required")
+		}
+		if len(note) > maxDescriptionLength {
+			return nil, requestError(http.StatusBadRequest, fmt.Sprintf("Note text is too long, max %d characters allowed", maxDescriptionLength))
+		}
+		writeCtx, cancel := writeContext(ctx)
+		defer cancel()
+		var err error
+		id, err = h.database.AddLink(writeCtx, fmt.Sprintf("note:%d", time.Now().UnixMilli()), title, note, []byte(note))
+		if err != nil {
+			return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to add note: %v", err))
+		}
+	}
+	location := fmt.Sprintf("/%d", id)
+	links, err := h.listLinks(ctx, params.S.Or(""))
+	if err != nil {
+		return nil, errorWithLocation(err, location)
+	}
+	if wantsJSON(ctx) {
+		response, err := linkResponses(links)
+		if err != nil {
+			return nil, errorWithLocation(err, location)
+		}
+		return &api.LinksHeaders{Location: api.NewOptString(location), Response: response}, nil
+	}
+	body, err := h.listHTML(links, params.S.Or(""), params.HXRequest.Or("") == "true")
+	if err != nil {
+		return nil, errorWithLocation(err, location)
+	}
+	return &api.AddItemCreatedTextHTMLHeaders{
+		Location: api.NewOptString(location), Response: api.AddItemCreatedTextHTML{Data: body},
+	}, nil
+}
+
+// BookmarkletSave always returns the generated HTML result response.
+func (h *Handlers) BookmarkletSave(ctx context.Context, params api.BookmarkletSaveParams) (api.BookmarkletSaveRes, error) {
+	urlString := params.URL.Or("")
+	message := ""
+	var status int
+	if urlString == "" {
+		message, status = "No URL provided", http.StatusBadRequest
+	} else {
+		parsedURL, err := url.Parse(urlString)
+		if err != nil || h.validateURL(parsedURL) != nil {
+			message, status = "Invalid URL format. Must be a valid HTTP/HTTPS URL", http.StatusBadRequest
+		} else {
+			_, message, status = h.saveLink(ctx, parsedURL)
+		}
+	}
+	displayedURL := ""
+	if message == "" {
+		displayedURL = urlString
+	}
+	body, err := h.renderTemplate("bookmarklet-result.html", struct {
+		Success bool
+		URL     string
+		Error   string
+	}{Success: message == "", URL: displayedURL, Error: message})
+	if err != nil {
+		return nil, err
+	}
+	switch status {
+	case http.StatusCreated:
+		return &api.BookmarkletSaveCreated{Data: body}, nil
+	case http.StatusBadRequest:
+		return &api.BookmarkletSaveBadRequest{Data: body}, nil
+	case http.StatusConflict:
+		return &api.BookmarkletSaveConflict{Data: body}, nil
+	default:
+		return &api.BookmarkletSaveInternalServerError{Data: body}, nil
+	}
+}
+
+func (h *Handlers) GetLink(ctx context.Context, params api.GetLinkParams) (api.GetLinkRes, error) {
+	return h.getLink(ctx, params.ID, params.Edit.Or("") == "1")
+}
+
+func (h *Handlers) EditLink(ctx context.Context, req api.OptEditLinkReq, params api.EditLinkParams) (api.EditLinkRes, error) {
+	id, err := parseID(params.ID)
+	if err != nil {
+		return nil, err
+	}
+	title := req.Value.Title.Or("")
+	if title == "" {
+		return nil, requestError(http.StatusBadRequest, "title is required")
+	}
+	if len(title) > maxTitleLength {
+		return nil, requestError(http.StatusBadRequest, fmt.Sprintf("title is too long, max %d characters allowed", maxTitleLength))
+	}
+	description := req.Value.Description.Or("")
+	if len(description) > maxDescriptionLength {
+		return nil, requestError(http.StatusBadRequest, fmt.Sprintf("description is too long, max %d characters allowed", maxDescriptionLength))
+	}
+	body := h.refetchBody(ctx, id, description)
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
+	if err := h.database.UpdateLink(writeCtx, id, title, description, body); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, requestError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
+		}
+		return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed edit link: %v\n", err))
+	}
+	return h.getLink(ctx, params.ID, params.Edit.Or("") == "1")
+}
+
+func (h *Handlers) DeleteLink(ctx context.Context, params api.DeleteLinkParams) (api.DeleteLinkRes, error) {
+	id, err := parseID(params.ID)
+	if err != nil {
+		return nil, err
+	}
+	writeCtx, cancel := writeContext(ctx)
+	defer cancel()
+	if err := h.database.DeleteLink(writeCtx, id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, requestError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
+		}
+		return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed delete link: %v\n", err))
+	}
+	screenshotPath := filepath.Join(h.screenshotsDir, fmt.Sprintf("%d.png", id))
+	if err := os.Remove(screenshotPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("Failed to delete screenshot: %v\n", err)
+	}
+	return &api.DeleteLinkOK{}, nil
+}
+
+// Both get and edit return the same generated item representations.
+type itemResponse interface {
+	api.GetLinkRes
+	api.EditLinkRes
+}
+
+func (h *Handlers) getLink(ctx context.Context, idString string, edit bool) (itemResponse, error) {
+	id, err := parseID(idString)
+	if err != nil {
+		return nil, err
+	}
+	link, err := h.database.GetLink(ctx, id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, requestError(http.StatusNotFound, http.StatusText(http.StatusNotFound))
+		}
+		return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to get link: %v\n", err))
+	}
+	if wantsJSON(ctx) {
+		response, err := linkResponse(link)
+		if err != nil {
+			return nil, err
+		}
+		return &response, nil
+	}
+	templateName := "link-without-screenshot"
+	if h.browserContext != nil {
+		templateName = "link-with-screenshot"
+	}
+	body, err := h.renderTemplate(templateName, LinkView{Link: link, Edit: edit})
+	if err != nil {
+		return nil, err
+	}
+	return &api.ItemTextHTML{Data: body}, nil
+}
+
+func (h *Handlers) listLinks(ctx context.Context, search string) ([]db.Link, error) {
+	if search != "" {
+		links, err := h.database.Search(ctx, search)
+		if err != nil {
+			return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to search: %v\n", err))
+		}
+		return links, nil
+	}
+	links, err := h.database.GetAllLinks(ctx)
+	if err != nil {
+		return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to get links: %v\n", err))
+	}
+	return links, nil
+}
+
+func (h *Handlers) listHTML(dbLinks []db.Link, search string, fragment bool) (io.Reader, error) {
+	links := make([]LinkView, 0, len(dbLinks))
+	for _, link := range dbLinks {
+		links = append(links, LinkView{Link: link})
+	}
+	data := struct {
+		Search          string
+		Links           []LinkView
+		ShowScreenshots bool
+	}{Search: search, Links: links, ShowScreenshots: h.browserContext != nil}
+	name := "index.html"
+	if fragment {
+		name = "links"
+	}
+	return h.renderTemplate(name, data)
+}
+
+func (h *Handlers) renderTemplate(name string, data any) (io.Reader, error) {
+	buf := new(bytes.Buffer)
+	if err := h.templates.ExecuteTemplate(buf, name, data); err != nil {
+		return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to render %s: %v\n", name, err))
+	}
+	return buf, nil
+}
+
+// The generated external-type encoder does not propagate json.Marshal errors.
+// Only AddedAt can fail to marshal in this model; validate it before returning a
+// response so malformed stored timestamps still produce the established 500.
+func linkResponse(link db.Link) (api.Link, error) {
+	if _, err := link.AddedAt.MarshalJSON(); err != nil {
+		return api.Link{}, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to marshal JSON: %v", err))
+	}
+	return api.Link(link), nil
+}
+
+func linkResponses(links []db.Link) (api.Links, error) {
+	var response api.Links
+	if links != nil {
+		response = make(api.Links, len(links))
+	}
+	for i, link := range links {
+		value, err := linkResponse(link)
+		if err != nil {
+			return nil, err
+		}
+		response[i] = value
+	}
+	return response, nil
+}
+
+type handlerError struct {
+	status   int
+	message  string
+	location string
+}
+
+func (e *handlerError) Error() string { return e.message }
+
+func requestError(status int, message string) error {
+	return &handlerError{status: status, message: message}
+}
+
+func errorWithLocation(err error, location string) error {
+	var responseError *handlerError
+	if errors.As(err, &responseError) {
+		responseError.location = location
+	}
+	return err
+}
+
+func parseID(value string) (int64, error) {
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, requestError(http.StatusBadRequest, fmt.Sprintf("Invalid ID: %v", err))
+	}
+	return id, nil
+}
+
+func handleAPIError(_ context.Context, w http.ResponseWriter, _ *http.Request, err error) {
+	var responseError *handlerError
+	if errors.As(err, &responseError) {
+		if responseError.location != "" {
+			w.Header().Set("Location", responseError.location)
+		}
+		sendError(w, responseError.message, responseError.status)
+		return
+	}
+	sendError(w, fmt.Sprintf("Failed to serve API: %v", err), http.StatusInternalServerError)
+}
+
+// Authentication is enforced by main's optional Basic-auth middleware.
+func (h *Handlers) HandleBasicAuth(ctx context.Context, _ api.OperationName, _ api.BasicAuth) (context.Context, error) {
+	return ctx, nil
 }

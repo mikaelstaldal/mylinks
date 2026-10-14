@@ -233,6 +233,9 @@ components:
         type: string
   schemas:
     Link:
+      # Reuse the stored model so generated JSON retains encoding/json escaping
+      # and RFC3339Nano timestamps, as in the existing API.
+      x-ogen-type: github.com/mikaelstaldal/mylinks/cmd/mylinks/db.Link
       type: object
       required: [ID, URL, Title, Description, AddedAt]
       properties:
