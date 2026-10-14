@@ -1,0 +1,8 @@
+generator:
+  convenient_errors: "off"
+  features:
+    disable:
+      - "paths/client"
+      - "webhooks/client"
+      - "webhooks/server"
+      - "ogen/otel"

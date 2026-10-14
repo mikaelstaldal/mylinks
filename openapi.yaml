@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: MyLinks API
+  version: '1.0'
+  description: |
+    The existing browser and HTTP API. POST and PATCH consume URL-encoded forms,
+    never JSON. A response is JSON only if at least one Accept header value,
+    compared case-insensitively as a whole, equals application/json. Lists,
+    wildcards, quality parameters and surrounding whitespace do not select JSON.
+    Otherwise responses are HTML. HX-Request equal to true selects the list
+    fragment instead of the full page for GET / and POST /. Single-item HTML
+    responses are always fragments. The bookmarklet always returns a full HTML
+    result page, regardless of Accept or HX-Request.
+
+    HTTP Basic authentication protects all routes when -basic-auth-file is
+    configured; otherwise no authentication is required. The configured realm
+    is returned in WWW-Authenticate on authentication failures. Host and origin
+    checks may reject requests before they reach these handlers (see OPERATIONS.md).
+security:
+  - {}
+  - basicAuth: []
+paths:
+  /:
+    get:
+      operationId: listLinks
+      summary: List links and notes, optionally searching their indexed text
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/HXRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/List'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: addItem
+      summary: Fetch and save a link, or save a note
+      description: |
+        A nonempty url selects a link and fetches its title, description and
+        searchable body. Otherwise note-title and note-text are required, trimmed,
+        and limited to 250 and 1020 bytes respectively. url takes precedence over
+        note fields. The response lists all items (or the s query's search results),
+        rather than returning only the created item.
+      parameters:
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/HXRequest'
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: HTTP/HTTPS URL; public destinations only outside tests
+                note-title:
+                  type: string
+                  description: Required for notes; trimmed, at most 250 bytes
+                note-text:
+                  type: string
+                  description: Required for notes; trimmed, at most 1020 bytes
+      responses:
+        '201':
+          description: Updated list; Location identifies the created item
+          headers:
+            Location:
+              schema:
+                type: string
+              description: Item path, e.g. /123
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Links'
+            text/html:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /{id}:
+    parameters:
+      - $ref: '#/components/parameters/ID'
+    get:
+      operationId: getLink
+      summary: Get a link or note
+      parameters:
+        - $ref: '#/components/parameters/Edit'
+      responses:
+        '200':
+          $ref: '#/components/responses/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: editLink
+      summary: Replace an item's title and description
+      description: |
+        title is required and limited to 250 bytes (without trimming).
+        description defaults to empty and is limited to 1020 bytes.
+        The item's URL and added time are unchanged. Notes are re-indexed from
+        their edited description. A page body missing from storage is refetched
+        on a best-effort basis.
+      parameters:
+        - $ref: '#/components/parameters/Edit'
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: Required, nonempty, at most 250 bytes
+                description:
+                  type: string
+                  description: At most 1020 bytes; defaults to empty
+      responses:
+        '200':
+          $ref: '#/components/responses/Item'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: deleteLink
+      summary: Delete an item
+      responses:
+        '200':
+          description: Deleted; empty response body
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /bookmarklet:
+    get:
+      operationId: bookmarkletSave
+      summary: Fetch and save a link from the bookmarklet popup
+      description: Always returns the bookmarklet result HTML page, including errors.
+      parameters:
+        - name: url
+          in: query
+          required: false
+          description: HTTP/HTTPS URL to fetch; missing or empty yields 400
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Full HTML page reporting success or the specific failure
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Full HTML page reporting success or the specific failure
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+        '409':
+          description: Full HTML page reporting success or the specific failure
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+        '500':
+          description: Full HTML page reporting success or the specific failure
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      description: Signed decimal int64 item ID; malformed or overflowing values yield 400
+      schema:
+        type: string
+    Search:
+      name: s
+      in: query
+      description: Full text search; empty or absent lists all items
+      schema:
+        type: string
+    Edit:
+      name: edit
+      in: query
+      description: Exactly 1 renders the HTML edit form; ignored for JSON
+      schema:
+        type: string
+    HXRequest:
+      name: HX-Request
+      in: header
+      description: Exactly true selects the HTML list fragment; ignored for JSON
+      schema:
+        type: string
+  schemas:
+    Link:
+      type: object
+      required: [ID, URL, Title, Description, AddedAt]
+      properties:
+        ID:
+          type: integer
+          format: int64
+        URL:
+          type: string
+          description: Web URL or note pseudo-URL (note followed by a colon and a timestamp)
+        Title:
+          type: string
+        Description:
+          type: string
+        AddedAt:
+          type: string
+          format: date-time
+    Links:
+      type: array
+      nullable: true
+      description: Empty database/search results are serialized as null, not an empty array
+      items:
+        $ref: '#/components/schemas/Link'
+  responses:
+    List:
+      description: JSON list, full HTML page, or htmx list fragment
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Links'
+        text/html:
+          schema:
+            type: string
+            format: binary
+    Item:
+      description: JSON item or HTML display/edit fragment
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Link'
+        text/html:
+          schema:
+            type: string
+            format: binary
+    BadRequest:
+      description: Invalid ID, form, URL, note fields, edit fields, or failure fetching a page; message followed by a newline
+      content:
+        text/plain:
+          schema:
+            type: string
+            format: binary
+    NotFound:
+      description: Item not found; body is Not Found followed by a newline
+      content:
+        text/plain:
+          schema:
+            type: string
+            format: binary
+    Conflict:
+      description: URL already exists; message followed by a newline
+      content:
+        text/plain:
+          schema:
+            type: string
+            format: binary
+    InternalError:
+      description: Storage, search or rendering failure; body is Internal Server Error followed by a newline (details are logged)
+      content:
+        text/plain:
+          schema:
+            type: string
+            format: binary
+    Unauthorized:
+      description: HTTP Basic authentication missing or invalid, only when configured
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: string
+                enum: [unauthorized]

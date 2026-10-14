@@ -23,6 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Generate API server
+        run: |
+          go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+          go generate ./...
       - run: go test ./...
       - run: go run ./cmd/mylinks -demo-bundle site
       - uses: actions/configure-pages@v6

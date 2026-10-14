@@ -13,6 +13,8 @@ This document provides essential information for developers working on the MyLin
 2. Navigate to the project root
 3. Build the application:
    ```bash
+   go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+   go generate ./...
    go build ./cmd/mylinks
    ```
 4. Run the application:
@@ -113,6 +115,9 @@ Example:
 ## Testing Information
 
 ### Running Tests
+Generate the API server first with `go generate ./...` (the pinned ogen binary
+must be on PATH). Generated code in `internal/api/` is not committed.
+
 To run all tests:
 ```bash
 go test ./...

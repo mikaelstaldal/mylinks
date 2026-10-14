@@ -39,7 +39,12 @@ jobs:
 
       # Pinned, and kept in step with the pin in main.yml.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+        run: |
+          go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Generate API server
+        run: go generate ./...
 
       # In the default source mode this fails the job only on a vulnerability
       # reachable from this code. One in a module we merely require is reported

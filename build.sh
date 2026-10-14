@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUTPUT_FLAG=""
+OUTPUT_FLAGS=()
 while getopts "o:" opt; do
   case $opt in
     o)
-      OUTPUT_FLAG="-o $OPTARG"
+      OUTPUT_FLAGS=(-o "$OPTARG")
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -14,6 +14,8 @@ while getopts "o:" opt; do
   esac
 done
 
-go build -trimpath -buildvcs=true -tags netgo $OUTPUT_FLAG ./cmd/mylinks/
+go generate ./...
+
+go build -trimpath -buildvcs=true -tags netgo "${OUTPUT_FLAGS[@]}" ./cmd/mylinks/
 go test ./...
 golangci-lint run ./...

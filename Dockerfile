@@ -10,10 +10,14 @@ RUN go mod download
 
 # Copy the Go source code
 COPY cmd/ cmd
+COPY internal/ internal
+COPY openapi.yaml ./
 COPY empty-efs.go ui/efs.go
 COPY empty/ ui/
 
 # Build the application
+RUN go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+RUN go generate ./...
 RUN go build -v -o /app/mylinks ./cmd/mylinks
 
 FROM chromedp/headless-shell@sha256:24b6acd183756b9cdc9b2c951141cefbc645a9b6a18341975babf0911a30c7e5

@@ -61,6 +61,8 @@ and store screenshots in `data/screenshots`.
 
 1. Build the standalone executable
    ```bash
+   go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+   go generate ./...
    go build -tags netgo -v ./cmd/mylinks/
    ```
 2. Run it without authentication, listening on localhost only:
@@ -169,19 +171,18 @@ go test ./...
 
 ## API Endpoints
 
-The application provides the following HTTP endpoints:
+The current HTTP API is documented in [openapi.yaml](openapi.yaml) (OpenAPI
+3.0.3), including JSON, HTML, htmx, form submissions, and the bookmarklet.
 
-- `GET /` - Display all saved links
-- `GET /?s=term` - Search for links
-- `POST /` - Add a new link/note
-- `GET /{id}` - Get a specific link
-- `GET /{id}?edit=1` - Get a specific link as an edit form
-- `PATCH /{id}` - Edit a specific link
-- `DELETE /{id}` - Delete a specific link
-- `GET /bookmarklet?url=...` - Save a URL and show a result page that closes itself
+The backend server is generated with ogen v1.24.0. Install the pinned generator
+before building:
 
-Plus `GET /static/` for the assets, and `GET /screenshots/` when screenshots are
-enabled.
+```bash
+go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
+go generate ./...
+```
+
+Generated Go files are not committed; `build.sh` regenerates them before building.
 
 ## Dependencies
 

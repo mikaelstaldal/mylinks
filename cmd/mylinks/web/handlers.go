@@ -153,6 +153,10 @@ func newHandlers(executableDir string, database *db.DB, screenshotsDir string, f
 // Returns an http.Handler that includes all configured routes with common headers.
 func (h *Handlers) Routes() http.Handler {
 	mux := http.NewServeMux()
+	apiServer, err := newAPIServer()
+	if err != nil {
+		log.Fatalf("Unable to initialize API server: %v", err)
+	}
 
 	staticDir := filepath.Join(h.executableDir, "ui/static")
 	staticFiles, err := filepath.Glob(filepath.Join(staticDir, "*"))
@@ -169,13 +173,13 @@ func (h *Handlers) Routes() http.Handler {
 		mux.Handle("GET /screenshots/", http.StripPrefix("/screenshots", http.FileServer(http.Dir(h.screenshotsDir))))
 	}
 
-	mux.HandleFunc("GET /bookmarklet", h.BookmarkletSave)
+	mux.HandleFunc("GET /bookmarklet", apiRoute(apiServer, h.BookmarkletSave))
 
-	mux.HandleFunc("GET /{$}", h.ListLinks)
-	mux.HandleFunc("POST /{$}", h.AddItem)
-	mux.HandleFunc("GET /{id}", h.GetLink)
-	mux.HandleFunc("PATCH /{id}", h.EditLink)
-	mux.HandleFunc("DELETE /{id}", h.DeleteLink)
+	mux.HandleFunc("GET /{$}", apiRoute(apiServer, h.ListLinks))
+	mux.HandleFunc("POST /{$}", apiRoute(apiServer, h.AddItem))
+	mux.HandleFunc("GET /{id}", apiRoute(apiServer, h.GetLink))
+	mux.HandleFunc("PATCH /{id}", apiRoute(apiServer, h.EditLink))
+	mux.HandleFunc("DELETE /{id}", apiRoute(apiServer, h.DeleteLink))
 
 	return commonHeaders(mux)
 }

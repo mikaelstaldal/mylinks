@@ -24,7 +24,7 @@ jobs:
     # release step needs to move the `latest` tag and upload the binary.
     permissions:
       contents: write
-    # The longest job here: two installs, then build.sh running build, tests and
+    # The longest job here: three installs, then build.sh running build, tests and
     # lint, then the scan and the release. It also holds the workflow's
     # concurrency group, which does not cancel in progress, so a job hung on the
     # six hour default would queue every later push behind it for six hours.
@@ -42,6 +42,7 @@ jobs:
       # the next step, but its pin belongs with the others.
       - name: Install build tools
         run: |
+          go install "github.com/ogen-go/ogen/cmd/ogen@$(go list -m -f '{{.Version}}' github.com/ogen-go/ogen)"
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 

@@ -31,3 +31,6 @@
 # Final stage: the launcher and the real assets, served from disk at runtime.
 !run.sh
 !ui
+
+!internal
+!openapi.yaml
