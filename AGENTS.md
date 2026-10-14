@@ -268,3 +268,10 @@ When adding new features:
   sqlite3 mylinks.sqlite
   ```
 - For template rendering issues, check the HTML source in the browser
+
+### API discovery
+
+The public `/openapi.yaml` and `/.well-known/api-catalog` endpoints and the
+`service-desc` response header are governed by `../mysuite/spec/api-discovery.md`.
+The document is embedded from the ogen generator input. MyLinks has no server
+demo mode; its static demo is outside this contract.

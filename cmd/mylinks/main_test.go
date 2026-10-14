@@ -156,6 +156,46 @@ func TestUnauthorizedResponse(t *testing.T) {
 	require.NoError(t, err, "Failed to read the response body")
 	assert.JSONEq(t, `{"error":"unauthorized"}`, string(body))
 
+	assert.Contains(t, response.Header.Values("Link"), `</openapi.yaml>; rel="service-desc"`)
+
+	// Exercise the actual production middleware order: discovery remains public,
+	// while even a rejection by the outer host guard advertises the document.
+	for _, path := range []string{"/openapi.yaml", "/.well-known/api-catalog"} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			request, err := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+			require.NoError(t, err)
+			public, err := http.DefaultClient.Do(request)
+			require.NoError(t, err)
+			publicBody, err := io.ReadAll(public.Body)
+			_ = public.Body.Close()
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, public.StatusCode)
+			assert.Contains(t, public.Header.Values("Link"), `</openapi.yaml>; rel="service-desc"`)
+			if method == http.MethodHead {
+				assert.Empty(t, publicBody)
+			}
+			if path == "/openapi.yaml" {
+				assert.Equal(t, "application/yaml", public.Header.Get("Content-Type"))
+				if method == http.MethodGet {
+					document, err := os.ReadFile("../../openapi.yaml")
+					require.NoError(t, err)
+					assert.Equal(t, document, publicBody)
+				}
+			} else {
+				assert.Equal(t, `application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"`, public.Header.Get("Content-Type"))
+				assert.Contains(t, public.Header.Values("Link"), `</.well-known/api-catalog>; rel="api-catalog"`)
+			}
+		}
+	}
+	badHost, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/openapi.yaml", port), nil)
+	require.NoError(t, err)
+	badHost.Host = "untrusted.example"
+	rejected, err := http.DefaultClient.Do(badHost)
+	require.NoError(t, err)
+	_ = rejected.Body.Close()
+	assert.Equal(t, http.StatusMisdirectedRequest, rejected.StatusCode)
+	assert.Contains(t, rejected.Header.Values("Link"), `</openapi.yaml>; rel="service-desc"`)
+
 	// The credentials from the file are accepted.
 	request, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
 	require.NoError(t, err)

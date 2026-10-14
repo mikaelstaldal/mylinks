@@ -34,3 +34,5 @@
 
 !internal
 !openapi.yaml
+
+!api_document.go

@@ -16,6 +16,8 @@ info:
     configured; otherwise no authentication is required. The configured realm
     is returned in WWW-Authenticate on authentication failures. Host and origin
     checks may reject requests before they reach these handlers (see OPERATIONS.md).
+servers:
+  - url: /
 security:
   - {}
   - basicAuth: []

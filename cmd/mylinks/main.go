@@ -140,7 +140,7 @@ func run() (exitCode int) {
 		root = authMiddleware(root)
 	}
 
-	root = hostPolicy.Middleware(root)
+	root = web.APIHeaders(hostPolicy.Middleware(web.Discovery(root)))
 
 	// Start server
 	serverAddr := net.JoinHostPort(*addr, strconv.Itoa(*port))

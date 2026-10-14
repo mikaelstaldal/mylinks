@@ -11,7 +11,7 @@ RUN go mod download
 # Copy the Go source code
 COPY cmd/ cmd
 COPY internal/ internal
-COPY openapi.yaml ./
+COPY openapi.yaml api_document.go ./
 COPY empty-efs.go ui/efs.go
 COPY empty/ ui/
 
