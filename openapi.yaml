@@ -3,7 +3,8 @@ info:
   title: MyLinks API
   version: '1.0'
   description: |
-    The existing browser and HTTP API. POST and PATCH consume URL-encoded forms,
+    This API is primarily used by an htmx powered web UI, but can be used for 
+    programmatic API access also. POST and PATCH consume URL-encoded forms, 
     never JSON. A response is JSON only if at least one Accept header value,
     compared case-insensitively as a whole, equals application/json. Lists,
     wildcards, quality parameters and surrounding whitespace do not select JSON.
