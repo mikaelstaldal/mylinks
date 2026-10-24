@@ -25,6 +25,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/ledongthuc/pdf"
 	"github.com/mikaelstaldal/go-server-common/httputil"
+	"github.com/mikaelstaldal/go-server-common/termsafe"
 	"github.com/mikaelstaldal/mylinks/cmd/mylinks/db"
 	"github.com/mikaelstaldal/mylinks/internal/api"
 	"github.com/mikaelstaldal/mylinks/ui"
@@ -72,7 +73,7 @@ func newHandlers(executableDir string, database *db.DB, screenshotsDir string, f
 	templatesDir := filepath.Join(executableDir, "ui/templates")
 	templateFiles, err := filepath.Glob(filepath.Join(templatesDir, "*.html"))
 	if err != nil {
-		log.Fatalf("Unable to glob templates: %v", err)
+		log.Fatalf("Unable to glob templates: %v", termsafe.String(err.Error()))
 	}
 
 	if len(templateFiles) > 0 {
@@ -81,7 +82,7 @@ func newHandlers(executableDir string, database *db.DB, screenshotsDir string, f
 		templates, err = templates.ParseFS(ui.Files, "templates/*.html")
 	}
 	if err != nil {
-		log.Fatalf("Unable to read templates: %v", err)
+		log.Fatalf("Unable to read templates: %v", termsafe.String(err.Error()))
 	}
 	if templates == nil {
 		log.Fatalf("No templates found")
@@ -127,7 +128,7 @@ func newHandlers(executableDir string, database *db.DB, screenshotsDir string, f
 	dockerURL := os.Getenv("CHROMEDP")
 	if dockerURL != "" {
 		if err := os.MkdirAll(screenshotsDir, 0700); err != nil {
-			log.Fatalf("failed to create screenshots directory: %v", err)
+			log.Fatalf("failed to create screenshots directory: %v", termsafe.String(err.Error()))
 		}
 
 		allocatorContext, _ := chromedp.NewRemoteAllocator(context.Background(), dockerURL)
@@ -154,13 +155,13 @@ func (h *Handlers) Routes() http.Handler {
 	mux := http.NewServeMux()
 	apiServer, err := api.NewServer(h, h, api.WithErrorHandler(handleAPIError))
 	if err != nil {
-		log.Fatalf("Unable to initialize API server: %v", err)
+		log.Fatalf("Unable to initialize API server: %v", termsafe.String(err.Error()))
 	}
 
 	staticDir := filepath.Join(h.executableDir, "ui/static")
 	staticFiles, err := filepath.Glob(filepath.Join(staticDir, "*"))
 	if err != nil {
-		log.Fatalf("Unable to glob static files: %v", err)
+		log.Fatalf("Unable to glob static files: %v", termsafe.String(err.Error()))
 	}
 	if len(staticFiles) > 0 {
 		mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServer(http.Dir(staticDir))))
@@ -247,7 +248,7 @@ func (h *Handlers) refetchBody(ctx context.Context, id int64, description string
 	if err != nil {
 		// A missing link is reported by the update itself.
 		if !errors.Is(err, db.ErrNotFound) {
-			log.Printf("Unable to look up link %d to refetch its body: %v", id, err)
+			log.Printf("Unable to look up link %d to refetch its body: %v", id, termsafe.String(err.Error()))
 		}
 		return nil
 	}
@@ -265,7 +266,7 @@ func (h *Handlers) refetchBody(ctx context.Context, id int64, description string
 	hasBody, err := h.database.HasBody(ctx, id)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound) {
-			log.Printf("Unable to check whether link %d has a body: %v", id, err)
+			log.Printf("Unable to check whether link %d has a body: %v", id, termsafe.String(err.Error()))
 		}
 		return nil
 	}
@@ -275,7 +276,7 @@ func (h *Handlers) refetchBody(ctx context.Context, id int64, description string
 
 	parsedURL, err := url.Parse(link.URL)
 	if err != nil || h.validateURL(parsedURL) != nil {
-		log.Printf("Not refetching the body of link %d, %s is no longer a valid URL", id, link.URL)
+		log.Printf("Not refetching the body of link %d, %s is no longer a valid URL", id, termsafe.String(link.URL))
 		return nil
 	}
 
@@ -288,7 +289,7 @@ func (h *Handlers) refetchBody(ctx context.Context, id int64, description string
 		_, _, body, err = h.extractTitleAndDescriptionAndBodyFromURL(ctx, parsedURL)
 	}
 	if err != nil {
-		log.Printf("Unable to refetch %s to index its body: %v", link.URL, err)
+		log.Printf("Unable to refetch %s to index its body: %v", termsafe.String(link.URL), termsafe.String(err.Error()))
 		return nil
 	}
 
@@ -335,11 +336,11 @@ func (h *Handlers) extractTitleAndDescriptionAndBodyFromURL(ctx context.Context,
 		if resp.StatusCode == http.StatusForbidden &&
 			(strings.HasPrefix(strings.ToLower(contentType), "text/html") ||
 				strings.HasPrefix(strings.ToLower(contentType), "application/xhtml+xml")) {
-			log.Printf("HTTP 403 with HTML body fetching %s (bot detection?), saving with unknown title", url)
+			log.Printf("HTTP 403 with HTML body fetching %s (bot detection?), saving with unknown title", termsafe.String(url.String()))
 			return "(unknown)", "", nil, nil
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
-			log.Printf("HTTP 429 fetching %s (bot detection?), saving with unknown title", url)
+			log.Printf("HTTP 429 fetching %s (bot detection?), saving with unknown title", termsafe.String(url.String()))
 			return "(unknown)", "", nil, nil
 		}
 		return "", "", nil, fmt.Errorf("HTTP error: %d", resp.StatusCode)
@@ -514,7 +515,7 @@ func (h *Handlers) extractTitleAndDescriptionAndBodyAndScreenshotFromURL(url *ur
 	if response.Status >= 400 {
 		// Degrade gracefully for Cloudflare-style bot detection (403). For all other errors, fail.
 		if response.Status == http.StatusForbidden {
-			log.Printf("HTTP 403 fetching %s (bot detection?), saving with unknown title", url)
+			log.Printf("HTTP 403 fetching %s (bot detection?), saving with unknown title", termsafe.String(url.String()))
 			return "(unknown)", "", nil, nil, nil
 		}
 		return "", "", nil, nil, fmt.Errorf("failed to fetch URL: %v %v", response.Status, response.StatusText)
@@ -543,7 +544,7 @@ func (h *Handlers) extractTitleAndDescriptionAndBodyAndScreenshotFromURL(url *ur
 		chromedp.JavascriptAttribute(`body`, "outerHTML", &body),
 	)
 	if err != nil {
-		log.Printf("failed to extract body: %v", err)
+		log.Printf("failed to extract body: %v", termsafe.String(err.Error()))
 	}
 
 	var screenshot []byte
@@ -609,7 +610,7 @@ func wantJson(r *http.Request) bool {
 func sendError(w http.ResponseWriter, errorMessage string, status int) {
 	var message string
 	if status >= 500 {
-		log.Println(errorMessage + "\n" + string(debug.Stack()))
+		log.Println(termsafe.String(errorMessage) + "\n" + string(debug.Stack()))
 		message = http.StatusText(status)
 	} else {
 		message = errorMessage
@@ -795,7 +796,7 @@ func (h *Handlers) DeleteLink(ctx context.Context, params api.DeleteLinkParams) 
 	}
 	screenshotPath := filepath.Join(h.screenshotsDir, fmt.Sprintf("%d.png", id))
 	if err := os.Remove(screenshotPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete screenshot: %v\n", err)
+		log.Printf("Failed to delete screenshot: %v\n", termsafe.String(err.Error()))
 	}
 	return &api.DeleteLinkOK{}, nil
 }

@@ -8,7 +8,7 @@ require (
 	github.com/go-faster/errors v0.8.0
 	github.com/go-faster/jx v1.2.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
-	github.com/mikaelstaldal/go-server-common v1.15.0
+	github.com/mikaelstaldal/go-server-common v1.17.0
 	github.com/ogen-go/ogen v1.24.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/net v0.60.0
