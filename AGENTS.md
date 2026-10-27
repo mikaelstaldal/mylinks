@@ -203,6 +203,11 @@ func TestListLinks(t *testing.T) {
 - Database operations take a `context.Context` as their first argument, pass
   `r.Context()` from handlers so that work is abandoned when the client goes away
 
+### Frontend coding guides
+
+- Prefer HTML+CSS to JavaScript for interactive UI.
+- Prefer CSS to images, prefer SVG to bitmap images.
+
 ### Database Schema
 Links are stored in a single SQLite table:
 ```sql
