@@ -624,6 +624,24 @@ func screenshotFilename(urlString string) string {
 	return hex.EncodeToString(hash[:]) + ".png"
 }
 
+// maxNoteAttempts bounds addNote's search for an unused timestamp.
+const maxNoteAttempts = 100
+
+// addNote saves a note under the pseudo URL "note:" followed by a timestamp in
+// milliseconds, starting at millis. URLs are unique, so a second note added
+// within the same millisecond would be rejected as a duplicate; it is given
+// the next free millisecond instead.
+func addNote(ctx context.Context, database *db.DB, millis int64, title, note string) (int64, error) {
+	for range maxNoteAttempts {
+		id, err := database.AddLink(ctx, fmt.Sprintf("note:%d", millis), title, note, []byte(note))
+		if !errors.Is(err, db.ErrDuplicate) {
+			return id, err
+		}
+		millis++
+	}
+	return 0, db.ErrDuplicate
+}
+
 func isNote(urlString string) bool {
 	return strings.HasPrefix(urlString, "note:")
 }
@@ -684,7 +702,7 @@ func (h *Handlers) AddItem(ctx context.Context, req api.OptAddItemReq, params ap
 		writeCtx, cancel := writeContext(ctx)
 		defer cancel()
 		var err error
-		id, err = h.database.AddLink(writeCtx, fmt.Sprintf("note:%d", time.Now().UnixMilli()), title, note, []byte(note))
+		id, err = addNote(writeCtx, h.database, time.Now().UnixMilli(), title, note)
 		if err != nil {
 			return nil, requestError(http.StatusInternalServerError, fmt.Sprintf("Failed to add note: %v", err))
 		}

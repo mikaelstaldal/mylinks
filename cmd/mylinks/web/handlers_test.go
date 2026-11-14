@@ -579,6 +579,33 @@ func TestWriteContext(t *testing.T) {
 	assert.False(t, deadline.After(time.Now().Add(databaseWriteTimeout)), "Deadline too far away")
 }
 
+// TestAddNoteInSameMillisecond verifies that a note added in the same
+// millisecond as another gets the next one rather than failing as a duplicate.
+func TestAddNoteInSameMillisecond(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "test_notes.database")
+	database, err := db.InitDB(dbFile)
+	require.NoError(t, err, "Failed to initialize database")
+	t.Cleanup(func() {
+		_ = database.Close()
+	})
+
+	firstId, err := addNote(t.Context(), database, 1000, "First", "First note")
+	require.NoError(t, err, "Failed to add first note")
+	secondId, err := addNote(t.Context(), database, 1000, "Second", "Second note")
+	require.NoError(t, err, "Failed to add second note in the same millisecond")
+
+	first, err := database.GetLink(t.Context(), firstId)
+	require.NoError(t, err)
+	assert.Equal(t, "note:1000", first.URL)
+	second, err := database.GetLink(t.Context(), secondId)
+	require.NoError(t, err)
+	assert.Equal(t, "note:1001", second.URL)
+	assert.Equal(t, "Second", second.Title)
+	links, err := database.Search(t.Context(), "Second")
+	require.NoError(t, err)
+	assert.Len(t, links, 1, "Expected the second note to be searchable")
+}
+
 // TestEditLinkRefetchesMissingBody verifies that editing a link which has no
 // body stored fetches the page again, so that the body stays searchable, and
 // that a link which has one is left alone.
