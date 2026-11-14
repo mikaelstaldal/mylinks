@@ -174,7 +174,7 @@ go test ./...
 The current HTTP API is documented in [openapi.yaml](openapi.yaml) (OpenAPI
 3.0.3), including JSON, HTML, htmx, form submissions, and the bookmarklet.
 
-The backend server is generated with ogen v1.24.0. Install the pinned generator
+The backend server is generated with ogen v1.25.0. Install the pinned generator
 before building:
 
 ```bash

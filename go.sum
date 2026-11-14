@@ -46,8 +46,8 @@ github.com/mikaelstaldal/go-server-common v1.17.0 h1:9Rh24p7tnt8xegZb/dgfUa6uNcU
 github.com/mikaelstaldal/go-server-common v1.17.0/go.mod h1:UGwL9eAKhWZnJfXC2e9pKdGH9SJuNTwPPaNedYy5hMU=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
-github.com/ogen-go/ogen v1.24.0 h1:NehBG/8s0JeM6jYHPJeFJntBG3cE/xQgZd1q8BchPNM=
-github.com/ogen-go/ogen v1.24.0/go.mod h1:hcg4aTzLcu/MS1SGGahUriPBEOZB3c82RGIC6dYcdFU=
+github.com/ogen-go/ogen v1.25.0 h1:YKTNX0pP3x4ppHCEqMXJc4I4+6M0XMormmAr0dXHbDU=
+github.com/ogen-go/ogen v1.25.0/go.mod h1:2+RzIS/6/fcqMIqDZuEv2Cwg5ptfu5BhyU/TiRdS4No=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde h1:x0TT0RDC7UhAVbbWWBzr41ElhJx5tXPWkIHA2HWPRuw=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde/go.mod h1:nZgzbfBr3hhjoZnS66nKrHmduYNpc34ny7RK4z5/HM0=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
